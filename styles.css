@@ -172,43 +172,66 @@ body {
   --dir-x: 1;
   --flight-tilt: 0deg;
   --bank-angle: 0deg;
-  --lift: 0px;
-  --flap-duration: 0.24s;
-  --flap-depth: 1;
+  --figure-lift: 0px;
   --wing-a: #fff4b3;
   --wing-b: #f3a55d;
   --wing-c: #7ac7ff;
   --wing-d: #695ee6;
   --body-color: #37293d;
+  --body-tilt: 0deg;
+  --body-yaw: 0deg;
+  --body-bob: 0px;
+  --body-jitter-x: 0px;
+  --body-jitter-y: 0px;
+  --body-scale-base: 1;
+  --front-origin-left-x: 84%;
+  --front-origin-right-x: 16%;
+  --front-origin-y: 48%;
+  --back-origin-left-x: 82%;
+  --back-origin-right-x: 18%;
+  --back-origin-y: 44%;
+  --wing-front-left-angle: 20deg;
+  --wing-front-right-angle: -20deg;
+  --wing-back-left-angle: 16deg;
+  --wing-back-right-angle: -16deg;
+  --wing-front-left-scale: 1;
+  --wing-front-right-scale: 1;
+  --wing-back-left-scale: 1;
+  --wing-back-right-scale: 1;
+  --shadow-scale: 1;
+  --shadow-opacity: 0.36;
   position: absolute;
   left: 50%;
   top: 34%;
   width: var(--size);
-  height: calc(var(--size) * 0.78);
+  height: var(--size);
   transform: translate(-50%, -50%) rotate(var(--flight-tilt));
   pointer-events: none;
   z-index: 10;
   filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.38));
+  will-change: transform, opacity;
 }
 
 .butterfly-shadow {
   position: absolute;
   left: 50%;
-  bottom: -8px;
-  width: 52%;
-  height: 12px;
-  transform: translateX(-50%) scaleX(calc(0.92 + var(--flap-depth) * 0.02));
+  bottom: -6px;
+  width: 50%;
+  height: 14px;
+  transform: translateX(-50%) scale(var(--shadow-scale));
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.22);
   filter: blur(10px);
-  opacity: 0.42;
+  opacity: var(--shadow-opacity);
+  will-change: transform, opacity;
 }
 
 .butterfly-figure {
   position: absolute;
   inset: 0;
-  transform: translateY(var(--lift)) scaleX(var(--dir-x)) rotate(var(--bank-angle));
+  transform: translateY(var(--figure-lift)) scaleX(var(--dir-x)) rotate(var(--bank-angle));
   transform-origin: 50% 50%;
+  will-change: transform, opacity;
 }
 
 .butterfly-sprite {
@@ -217,12 +240,69 @@ body {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  animation: spriteFloat calc(var(--flap-duration) * 2.2) infinite alternate ease-in-out;
+}
+
+.butterfly-rig {
+  position: absolute;
+  inset: 0;
+}
+
+.butterfly-part {
+  position: absolute;
+  overflow: hidden;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+}
+
+.butterfly-part-image {
+  position: absolute;
+  max-width: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+.part-body {
+  z-index: 5;
+  transform-origin: 50% 32%;
+  transform:
+    translate3d(var(--body-jitter-x), calc(var(--body-bob) + var(--body-jitter-y)), 0)
+    rotate(var(--body-tilt))
+    skewX(var(--body-yaw))
+    scale(var(--body-scale-base));
+}
+
+.part-wing-front-left {
+  z-index: 4;
+  transform-origin: var(--front-origin-left-x) var(--front-origin-y);
+  transform: rotate(var(--wing-front-left-angle)) scaleY(var(--wing-front-left-scale));
+}
+
+.part-wing-front-right {
+  z-index: 4;
+  transform-origin: var(--front-origin-right-x) var(--front-origin-y);
+  transform: rotate(var(--wing-front-right-angle)) scaleY(var(--wing-front-right-scale));
+}
+
+.part-wing-back-left {
+  z-index: 3;
+  opacity: 0.82;
+  transform-origin: var(--back-origin-left-x) var(--back-origin-y);
+  transform: rotate(var(--wing-back-left-angle)) scaleY(var(--wing-back-left-scale));
+}
+
+.part-wing-back-right {
+  z-index: 3;
+  opacity: 0.82;
+  transform-origin: var(--back-origin-right-x) var(--back-origin-y);
+  transform: rotate(var(--wing-back-right-angle)) scaleY(var(--wing-back-right-scale));
 }
 
 .butterfly-art {
   position: absolute;
   inset: 0;
+  transform: translateY(2px) rotate(-4deg);
 }
 
 .wing {
@@ -259,22 +339,22 @@ body {
 
 .wing-front.left {
   left: 8px;
-  animation: flapLeft var(--flap-duration) infinite alternate ease-in-out;
+  animation: flapLeft 0.24s infinite alternate ease-in-out;
 }
 
 .wing-back.left {
   left: 18px;
-  animation: flapLeftBack calc(var(--flap-duration) * 1.08) infinite alternate ease-in-out;
+  animation: flapLeftBack 0.26s infinite alternate ease-in-out;
 }
 
 .wing-front.right {
   right: 8px;
-  animation: flapRight var(--flap-duration) infinite alternate ease-in-out;
+  animation: flapRight 0.24s infinite alternate ease-in-out;
 }
 
 .wing-back.right {
   right: 18px;
-  animation: flapRightBack calc(var(--flap-duration) * 1.08) infinite alternate ease-in-out;
+  animation: flapRightBack 0.26s infinite alternate ease-in-out;
 }
 
 .body {
@@ -452,7 +532,7 @@ body {
 }
 
 .capture-hit {
-  animation: capturePulse 0.38s ease-out forwards;
+  animation: capturePulse 0.2s ease-out forwards;
 }
 
 .miss {
@@ -507,15 +587,15 @@ body {
 @keyframes capturePulse {
   0% {
     opacity: 1;
-    transform: translateY(var(--lift)) scaleX(var(--dir-x)) rotate(var(--bank-angle)) scale(1);
+    transform: translate(-50%, -50%) rotate(var(--flight-tilt)) scale(1);
   }
   55% {
     opacity: 1;
-    transform: translateY(var(--lift)) scaleX(var(--dir-x)) rotate(var(--bank-angle)) scale(1.14);
+    transform: translate(-50%, -50%) rotate(var(--flight-tilt)) scale(1.14);
   }
   100% {
     opacity: 0;
-    transform: translateY(var(--lift)) scaleX(var(--dir-x)) rotate(var(--bank-angle)) scale(0.42);
+    transform: translate(-50%, -50%) rotate(var(--flight-tilt)) scale(0.42);
   }
 }
 

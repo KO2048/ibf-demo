@@ -3,6 +3,7 @@ const canvas = document.getElementById('fx');
 const ctx = canvas.getContext('2d');
 const butterfly = document.getElementById('butterfly');
 const butterflyFigure = document.getElementById('butterflyFigure');
+const butterflyRig = document.getElementById('butterflyRig');
 const butterflyArt = document.getElementById('butterflyArt');
 const butterflySprite = document.getElementById('butterflySprite');
 const statusEl = document.getElementById('status');
@@ -20,6 +21,37 @@ const resultMeta = document.getElementById('resultMeta');
 const resultFlavor = document.getElementById('resultFlavor');
 const continueBtn = document.getElementById('continueBtn');
 
+const rigParts = {
+  body: document.getElementById('partBody'),
+  leftWingFront: document.getElementById('partWingFrontLeft'),
+  rightWingFront: document.getElementById('partWingFrontRight'),
+  leftWingBack: document.getElementById('partWingBackLeft'),
+  rightWingBack: document.getElementById('partWingBackRight'),
+};
+
+const rigPartImages = Object.fromEntries(
+  Object.entries(rigParts).map(([key, part]) => [key, part.querySelector('.butterfly-part-image')]),
+);
+
+const MOTION_STATES = {
+  HOVER_IDLE: 'hover_idle',
+  FLAP_FORWARD: 'flap_forward',
+  BANK_LEFT: 'bank_left',
+  BANK_RIGHT: 'bank_right',
+  STARTLED_ESCAPE: 'startled_escape',
+  CAPTURED_STAGGER: 'captured_stagger',
+};
+
+function createSliceBoxes(frontX, frontY, frontW, frontH, backX, backY, backW, backH, bodyX, bodyY, bodyW, bodyH) {
+  return {
+    leftWingFront: { x: frontX, y: frontY, w: frontW, h: frontH },
+    rightWingFront: { x: 100 - frontX - frontW, y: frontY, w: frontW, h: frontH },
+    leftWingBack: { x: backX, y: backY, w: backW, h: backH },
+    rightWingBack: { x: 100 - backX - backW, y: backY, w: backW, h: backH },
+    body: { x: bodyX, y: bodyY, w: bodyW, h: bodyH },
+  };
+}
+
 const butterflyCatalog = [
   {
     id: 'amber-glider',
@@ -30,7 +62,14 @@ const butterflyCatalog = [
     weight: 0.45,
     size: 118,
     captureRadius: 58,
+    rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_54 PM (1) Background Removed.png',
+    sliceBoxes: createSliceBoxes(5, 3, 42, 42, 13, 40, 29, 30, 39, 9, 22, 70),
+    rig: {
+      frontPivot: { x: 84, y: 48 },
+      backPivot: { x: 82, y: 44 },
+      bodyScale: 1,
+    },
     palette: {
       wingA: '#fff0b1',
       wingB: '#ffb766',
@@ -61,7 +100,14 @@ const butterflyCatalog = [
     weight: 0.35,
     size: 104,
     captureRadius: 52,
+    rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_55 PM (3) Background Removed.png',
+    sliceBoxes: createSliceBoxes(8, 4, 39, 39, 16, 40, 27, 28, 40, 11, 20, 68),
+    rig: {
+      frontPivot: { x: 84, y: 47 },
+      backPivot: { x: 80, y: 43 },
+      bodyScale: 0.98,
+    },
     palette: {
       wingA: '#f2f3ff',
       wingB: '#c6d9ff',
@@ -92,7 +138,14 @@ const butterflyCatalog = [
     weight: 0.2,
     size: 134,
     captureRadius: 66,
+    rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_55 PM (2) Background Removed.png',
+    sliceBoxes: createSliceBoxes(5, 2, 43, 44, 15, 39, 28, 30, 40, 8, 20, 72),
+    rig: {
+      frontPivot: { x: 85, y: 48 },
+      backPivot: { x: 82, y: 45 },
+      bodyScale: 1.04,
+    },
     palette: {
       wingA: '#fff2d9',
       wingB: '#ffcf9c',
@@ -126,6 +179,7 @@ let swipeTrail = [];
 let lastPointer = null;
 let lastFrameAt = 0;
 let currentButterfly = null;
+let revealTimer = null;
 let butterflyState = createEmptyButterflyState();
 
 function createEmptyButterflyState() {
@@ -145,6 +199,20 @@ function createEmptyButterflyState() {
     bankAngle: 0,
     lift: 0,
     captureRadius: 56,
+    motionState: MOTION_STATES.HOVER_IDLE,
+    motionStateTime: 0,
+    flapPhase: 0,
+    flapRate: 4.2,
+    nearMissCooldown: 0,
+    startleUntil: 0,
+    staggerUntil: 0,
+    bodyTilt: 0,
+    bodyYawFake: 0,
+    escapeBoost: 0,
+    lastVx: 0,
+    lastVy: 0,
+    capturePending: false,
+    resolvingCapture: false,
   };
 }
 
@@ -154,6 +222,17 @@ function rand(min, max) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function lerp(start, end, amount) {
+  return start + (end - start) * amount;
+}
+
+function clearRevealTimer() {
+  if (revealTimer) {
+    clearTimeout(revealTimer);
+    revealTimer = null;
+  }
 }
 
 function resize() {
@@ -233,29 +312,62 @@ function updateSpecimenCard() {
   }
 
   specimenName.textContent = currentButterfly.name;
-  const modeCopy = mode === 'swipe' ? '滑动主流程已就绪' : '实验甩动模式已启用';
-  specimenMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity} · ${modeCopy}`;
+  const stateCopy = butterflyState.capturePending
+    ? '已命中，正在揭晓'
+    : mode === 'swipe'
+      ? '滑动主流程已就绪'
+      : '实验甩动模式已启用';
+  specimenMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity} · ${stateCopy}`;
+}
+
+function configureSlicedPart(partEl, imageEl, box, source) {
+  partEl.style.left = `${box.x}%`;
+  partEl.style.top = `${box.y}%`;
+  partEl.style.width = `${box.w}%`;
+  partEl.style.height = `${box.h}%`;
+  imageEl.src = source;
+  imageEl.style.left = `${(-box.x / box.w) * 100}%`;
+  imageEl.style.top = `${(-box.y / box.h) * 100}%`;
+  imageEl.style.width = `${(100 / box.w) * 100}%`;
+  imageEl.style.height = `${(100 / box.h) * 100}%`;
+}
+
+function setRigMode(modeName) {
+  butterfly.dataset.rigMode = modeName;
+  const sliced = modeName === 'sliced';
+  butterflyRig.classList.toggle('hidden', !sliced);
+  butterflyArt.classList.toggle('hidden', sliced);
+  butterflySprite.classList.add('hidden');
 }
 
 function applyButterflyVariant(variant) {
   currentButterfly = variant;
   butterfly.style.setProperty('--size', `${variant.size}px`);
-  butterfly.style.setProperty('--flap-duration', `${variant.motion.flapDuration}s`);
-  butterfly.style.setProperty('--flap-depth', variant.motion.flapDepth);
   butterfly.style.setProperty('--wing-a', variant.palette.wingA);
   butterfly.style.setProperty('--wing-b', variant.palette.wingB);
   butterfly.style.setProperty('--wing-c', variant.palette.wingC);
   butterfly.style.setProperty('--wing-d', variant.palette.wingD);
   butterfly.style.setProperty('--body-color', variant.palette.body);
+  butterfly.style.setProperty('--front-origin-left-x', `${variant.rig.frontPivot.x}%`);
+  butterfly.style.setProperty('--front-origin-right-x', `${100 - variant.rig.frontPivot.x}%`);
+  butterfly.style.setProperty('--front-origin-y', `${variant.rig.frontPivot.y}%`);
+  butterfly.style.setProperty('--back-origin-left-x', `${variant.rig.backPivot.x}%`);
+  butterfly.style.setProperty('--back-origin-right-x', `${100 - variant.rig.backPivot.x}%`);
+  butterfly.style.setProperty('--back-origin-y', `${variant.rig.backPivot.y}%`);
+  butterfly.style.setProperty('--body-scale-base', variant.rig.bodyScale);
 
-  if (variant.assetSrc) {
+  const rigMode = variant.rigMode === 'sliced' && variant.assetSrc ? 'sliced' : 'placeholder';
+  setRigMode(rigMode);
+
+  if (rigMode === 'sliced') {
     butterflySprite.src = variant.assetSrc;
-    butterflySprite.classList.remove('hidden');
-    butterflyArt.classList.add('hidden');
+    configureSlicedPart(rigParts.body, rigPartImages.body, variant.sliceBoxes.body, variant.assetSrc);
+    configureSlicedPart(rigParts.leftWingFront, rigPartImages.leftWingFront, variant.sliceBoxes.leftWingFront, variant.assetSrc);
+    configureSlicedPart(rigParts.rightWingFront, rigPartImages.rightWingFront, variant.sliceBoxes.rightWingFront, variant.assetSrc);
+    configureSlicedPart(rigParts.leftWingBack, rigPartImages.leftWingBack, variant.sliceBoxes.leftWingBack, variant.assetSrc);
+    configureSlicedPart(rigParts.rightWingBack, rigPartImages.rightWingBack, variant.sliceBoxes.rightWingBack, variant.assetSrc);
   } else {
     butterflySprite.removeAttribute('src');
-    butterflySprite.classList.add('hidden');
-    butterflyArt.classList.remove('hidden');
   }
 
   updateSpecimenCard();
@@ -271,16 +383,23 @@ function pickButterflyVariant() {
   return butterflyCatalog[0];
 }
 
+function setMotionState(nextState) {
+  if (butterflyState.motionState === nextState) return;
+  butterflyState.motionState = nextState;
+  butterflyState.motionStateTime = 0;
+}
+
 function placeButterfly() {
   butterfly.style.left = `${butterflyState.x}px`;
   butterfly.style.top = `${butterflyState.y}px`;
   butterfly.style.setProperty('--dir-x', butterflyState.dirX);
   butterfly.style.setProperty('--flight-tilt', `${butterflyState.bankAngle}deg`);
-  butterfly.style.setProperty('--bank-angle', `${clamp(butterflyState.bankAngle * 0.65, -16, 16)}deg`);
-  butterfly.style.setProperty('--lift', `${butterflyState.lift}px`);
+  butterfly.style.setProperty('--bank-angle', `${clamp(butterflyState.bankAngle * 0.42, -10, 10)}deg`);
+  butterfly.style.setProperty('--figure-lift', `${butterflyState.lift}px`);
 }
 
 function spawnButterfly() {
+  clearRevealTimer();
   const variant = pickButterflyVariant();
   applyButterflyVariant(variant);
   const centerBias = rand(0.32, 0.68);
@@ -300,12 +419,29 @@ function spawnButterfly() {
     bankAngle: 0,
     lift: 0,
     captureRadius: variant.captureRadius,
+    motionState: MOTION_STATES.HOVER_IDLE,
+    motionStateTime: 0,
+    flapPhase: rand(0, Math.PI * 2),
+    flapRate: 4.6,
+    nearMissCooldown: 0,
+    startleUntil: 0,
+    staggerUntil: 0,
+    bodyTilt: 0,
+    bodyYawFake: 0,
+    escapeBoost: 0,
+    lastVx: 0,
+    lastVy: 0,
+    capturePending: false,
+    resolvingCapture: false,
   };
-  butterfly.classList.remove('hidden');
+
+  butterfly.classList.remove('hidden', 'capture-hit', 'miss');
+  butterflyFigure.classList.remove('capture-hit');
   resultCard.classList.add('hidden');
   setStatus(mode === 'swipe' ? '观察飞行轨迹后滑动捕捉' : '蝴蝶已出现，可切回滑动或测试甩动');
   updateSpecimenCard();
   placeButterfly();
+  updateRigPose(0, 0, 0, 0);
 }
 
 function respawnButterfly() {
@@ -323,7 +459,7 @@ function angleDelta(current, target) {
 }
 
 function chooseNextFlightDecision() {
-  if (!currentButterfly || !butterflyState.alive) return;
+  if (!currentButterfly || !butterflyState.alive || butterflyState.capturePending) return;
   const { motion } = currentButterfly;
   const centerX = window.innerWidth * 0.5;
   const centerY = window.innerHeight * 0.4;
@@ -346,45 +482,233 @@ function chooseNextFlightDecision() {
   butterflyState.nextDecisionIn = rand(...motion.decisionWindow);
 }
 
+function applyRigPoseVariable(name, value, unit = 'deg') {
+  butterfly.style.setProperty(name, `${value}${unit}`);
+}
+
+function updateRigPose(dt, turnDelta, vx, vy) {
+  if (!currentButterfly) return;
+
+  const { motion } = currentButterfly;
+  butterflyState.motionStateTime += dt;
+
+  let nextState = MOTION_STATES.FLAP_FORWARD;
+  if (butterflyState.capturePending) {
+    nextState = MOTION_STATES.CAPTURED_STAGGER;
+  } else if (butterflyState.startleUntil > 0) {
+    nextState = MOTION_STATES.STARTLED_ESCAPE;
+  } else if (butterflyState.hoverRemaining > 0.08 && butterflyState.speed < motion.baseSpeed * 0.62) {
+    nextState = MOTION_STATES.HOVER_IDLE;
+  } else if (turnDelta < -0.12) {
+    nextState = MOTION_STATES.BANK_LEFT;
+  } else if (turnDelta > 0.12) {
+    nextState = MOTION_STATES.BANK_RIGHT;
+  }
+  setMotionState(nextState);
+
+  const risingFactor = clamp((-vy) / Math.max(18, motion.baseSpeed * 0.65), 0, 1);
+  const hoverFactor = butterflyState.motionState === MOTION_STATES.HOVER_IDLE ? 1 : 0;
+  const stateRate = {
+    [MOTION_STATES.HOVER_IDLE]: 3.1,
+    [MOTION_STATES.FLAP_FORWARD]: 4.9,
+    [MOTION_STATES.BANK_LEFT]: 5.3,
+    [MOTION_STATES.BANK_RIGHT]: 5.3,
+    [MOTION_STATES.STARTLED_ESCAPE]: 7.6,
+    [MOTION_STATES.CAPTURED_STAGGER]: 8.4,
+  }[butterflyState.motionState];
+
+  butterflyState.flapRate += (stateRate + risingFactor * 0.8 - butterflyState.flapRate) * clamp(dt * 5.4, 0, 1);
+  butterflyState.flapPhase += dt * butterflyState.flapRate * Math.PI * 2;
+
+  const phaseOffset = 0.36 + currentButterfly.size * 0.0022;
+  const flapLeftFront = (Math.sin(butterflyState.flapPhase) + 1) * 0.5;
+  const flapRightFront = (Math.sin(butterflyState.flapPhase + phaseOffset) + 1) * 0.5;
+  const flapLeftBack = (Math.sin(butterflyState.flapPhase + phaseOffset * 0.55) + 1) * 0.5;
+  const flapRightBack = (Math.sin(butterflyState.flapPhase + phaseOffset * 1.4) + 1) * 0.5;
+
+  let leftBias = 1;
+  let rightBias = 1;
+  let bodyTiltTarget = turnDelta * 7;
+  let bodyYawTarget = turnDelta * 5;
+  let jitterX = 0;
+  let jitterY = 0;
+  let bobOffset = Math.sin(butterflyState.t * 3.2) * (hoverFactor ? 2.4 : 1.1);
+  let shadowScale = 0.9;
+  let shadowOpacity = 0.26;
+
+  if (butterflyState.motionState === MOTION_STATES.BANK_LEFT) {
+    leftBias = 0.78;
+    rightBias = 1.1;
+    bodyTiltTarget = -12;
+    bodyYawTarget = -5;
+  } else if (butterflyState.motionState === MOTION_STATES.BANK_RIGHT) {
+    leftBias = 1.1;
+    rightBias = 0.78;
+    bodyTiltTarget = 12;
+    bodyYawTarget = 5;
+  } else if (butterflyState.motionState === MOTION_STATES.STARTLED_ESCAPE) {
+    leftBias = 0.9 + Math.sin(butterflyState.t * 31) * 0.08;
+    rightBias = 1.05 + Math.cos(butterflyState.t * 28) * 0.08;
+    bodyTiltTarget = clamp(turnDelta * 20 + Math.sin(butterflyState.t * 34) * 7, -18, 18);
+    bodyYawTarget = clamp(turnDelta * 9, -9, 9);
+    jitterX = Math.sin(butterflyState.t * 42) * 1.8;
+    jitterY = Math.cos(butterflyState.t * 36) * 1.4;
+    bobOffset += Math.sin(butterflyState.t * 19) * 1.5;
+  } else if (butterflyState.motionState === MOTION_STATES.CAPTURED_STAGGER) {
+    leftBias = 1.18;
+    rightBias = 0.82;
+    bodyTiltTarget = Math.sin(butterflyState.t * 22) * 16;
+    bodyYawTarget = Math.cos(butterflyState.t * 20) * 6;
+    jitterX = Math.sin(butterflyState.t * 54) * 2.2;
+    jitterY = Math.cos(butterflyState.t * 43) * 1.8;
+    bobOffset += Math.sin(butterflyState.t * 28) * 2.2;
+  }
+
+  const frontOpen = {
+    [MOTION_STATES.HOVER_IDLE]: 36,
+    [MOTION_STATES.FLAP_FORWARD]: 58,
+    [MOTION_STATES.BANK_LEFT]: 52,
+    [MOTION_STATES.BANK_RIGHT]: 52,
+    [MOTION_STATES.STARTLED_ESCAPE]: 74,
+    [MOTION_STATES.CAPTURED_STAGGER]: 86,
+  }[butterflyState.motionState] + risingFactor * 10;
+
+  const backOpen = frontOpen * 0.7;
+  const frontClosed = butterflyState.motionState === MOTION_STATES.HOVER_IDLE ? -6 : -16;
+  const backClosed = butterflyState.motionState === MOTION_STATES.HOVER_IDLE ? -10 : -18;
+
+  const frontLeftAngle = lerp(frontClosed, frontOpen * leftBias, flapLeftFront);
+  const frontRightAngle = -lerp(frontClosed, frontOpen * rightBias, flapRightFront);
+  const backLeftAngle = lerp(backClosed, backOpen * leftBias * 0.94, flapLeftBack);
+  const backRightAngle = -lerp(backClosed, backOpen * rightBias * 0.94, flapRightBack);
+
+  const frontLeftScale = 0.9 + flapLeftFront * 0.14;
+  const frontRightScale = 0.9 + flapRightFront * 0.14;
+  const backLeftScale = 0.9 + flapLeftBack * 0.11;
+  const backRightScale = 0.9 + flapRightBack * 0.11;
+
+  butterflyState.bodyTilt += (bodyTiltTarget - butterflyState.bodyTilt) * clamp(dt * 7.2, 0, 1);
+  butterflyState.bodyYawFake += (bodyYawTarget - butterflyState.bodyYawFake) * clamp(dt * 6.5, 0, 1);
+  shadowScale = 0.84 + (flapLeftFront + flapRightFront) * 0.08;
+  shadowOpacity = 0.2 + (flapLeftBack + flapRightBack) * 0.12;
+
+  applyRigPoseVariable('--body-tilt', butterflyState.bodyTilt);
+  applyRigPoseVariable('--body-yaw', butterflyState.bodyYawFake);
+  butterfly.style.setProperty('--body-bob', `${bobOffset}px`);
+  butterfly.style.setProperty('--body-jitter-x', `${jitterX}px`);
+  butterfly.style.setProperty('--body-jitter-y', `${jitterY}px`);
+  applyRigPoseVariable('--wing-front-left-angle', frontLeftAngle);
+  applyRigPoseVariable('--wing-front-right-angle', frontRightAngle);
+  applyRigPoseVariable('--wing-back-left-angle', backLeftAngle);
+  applyRigPoseVariable('--wing-back-right-angle', backRightAngle);
+  butterfly.style.setProperty('--wing-front-left-scale', frontLeftScale);
+  butterfly.style.setProperty('--wing-front-right-scale', frontRightScale);
+  butterfly.style.setProperty('--wing-back-left-scale', backLeftScale);
+  butterfly.style.setProperty('--wing-back-right-scale', backRightScale);
+  butterfly.style.setProperty('--shadow-scale', shadowScale);
+  butterfly.style.setProperty('--shadow-opacity', shadowOpacity);
+}
+
+function finalizeCaptureReveal() {
+  if (!currentButterfly || butterflyState.resolvingCapture) return;
+  butterflyState.capturePending = false;
+  butterflyState.alive = false;
+  butterflyState.resolvingCapture = true;
+  butterfly.classList.add('capture-hit');
+  setStatus('捕捉完成，正在揭晓');
+  drawBurst(butterflyState.x, butterflyState.y, currentButterfly.palette.wingB);
+
+  revealTimer = setTimeout(() => {
+    butterfly.classList.remove('capture-hit');
+    butterfly.classList.add('hidden');
+    resultBadge.textContent = rarityLabel(currentButterfly.rarity);
+    resultTitle.textContent = `你抓到了${currentButterfly.name}`;
+    resultMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity}`;
+    resultFlavor.textContent = currentButterfly.flavor;
+    resultCard.classList.remove('hidden');
+    specimenMeta.textContent = `已完成捕捉 · ${currentButterfly.role} · ${currentButterfly.rarity}`;
+    butterflyState.resolvingCapture = false;
+    revealTimer = null;
+  }, 200);
+}
+
 function updateButterfly(dt) {
-  if (!currentButterfly || !butterflyState.alive) return;
+  if (!currentButterfly || (!butterflyState.alive && !butterflyState.capturePending)) return;
 
   const { motion } = currentButterfly;
   butterflyState.t += dt;
   butterflyState.nextDecisionIn -= dt;
+  butterflyState.nearMissCooldown = Math.max(0, butterflyState.nearMissCooldown - dt);
 
   if (butterflyState.hoverRemaining > 0) {
     butterflyState.hoverRemaining -= dt;
   }
 
-  if (butterflyState.nextDecisionIn <= 0) {
+  if (butterflyState.startleUntil > 0) {
+    butterflyState.startleUntil = Math.max(0, butterflyState.startleUntil - dt);
+    if (butterflyState.startleUntil === 0) {
+      butterflyState.escapeBoost = 0;
+    }
+  }
+
+  if (butterflyState.capturePending) {
+    butterflyState.staggerUntil = Math.max(0, butterflyState.staggerUntil - dt);
+    if (butterflyState.staggerUntil === 0) {
+      finalizeCaptureReveal();
+      return;
+    }
+  } else if (butterflyState.nextDecisionIn <= 0) {
     chooseNextFlightDecision();
   }
 
   const boundaryBiasX = butterflyState.x < motion.boundaryMargin ? 1 : butterflyState.x > window.innerWidth - motion.boundaryMargin ? -1 : 0;
   const boundaryBiasY = butterflyState.y < 82 ? 0.8 : butterflyState.y > window.innerHeight * 0.68 ? -1 : 0;
 
-  if (boundaryBiasX || boundaryBiasY) {
+  if (!butterflyState.capturePending && (boundaryBiasX || boundaryBiasY)) {
     butterflyState.targetHeading = Math.atan2(boundaryBiasY + rand(-0.15, 0.15), boundaryBiasX + rand(-0.15, 0.15));
     butterflyState.targetSpeed = motion.baseSpeed + motion.speedJitter * 0.4;
     butterflyState.hoverRemaining = 0;
   }
 
+  if (butterflyState.startleUntil > 0) {
+    butterflyState.targetSpeed = motion.baseSpeed + motion.speedJitter * 1.3;
+  }
+
   const headingAdjust = angleDelta(butterflyState.heading, butterflyState.targetHeading);
-  butterflyState.heading += headingAdjust * clamp(dt * motion.turnRate, 0, 1);
-  butterflyState.speed += (butterflyState.targetSpeed - butterflyState.speed) * clamp(dt * 3.1, 0, 1);
+  const turnRate = butterflyState.capturePending ? motion.turnRate * 1.6 : motion.turnRate;
+  butterflyState.heading += headingAdjust * clamp(dt * turnRate, 0, 1);
+
+  const speedTarget = butterflyState.capturePending
+    ? motion.baseSpeed * 0.16
+    : butterflyState.targetSpeed + butterflyState.escapeBoost * 18;
+  butterflyState.speed += (speedTarget - butterflyState.speed) * clamp(dt * 3.2, 0, 1);
 
   const sway = Math.sin(butterflyState.t * 1.7 + currentButterfly.size * 0.02) * motion.swayAmp;
   const bob = Math.cos(butterflyState.t * 2.5 + currentButterfly.size * 0.03) * motion.bobAmp;
   const hoverDampen = butterflyState.hoverRemaining > 0 ? 0.36 : 1;
-  const vx = Math.cos(butterflyState.heading) * butterflyState.speed + sway * hoverDampen;
-  const vy = Math.sin(butterflyState.heading) * butterflyState.speed * 0.72 + bob;
+
+  let vx = Math.cos(butterflyState.heading) * butterflyState.speed + sway * hoverDampen;
+  let vy = Math.sin(butterflyState.heading) * butterflyState.speed * 0.72 + bob;
+
+  if (butterflyState.startleUntil > 0) {
+    vx += Math.cos(butterflyState.t * 22) * 12;
+    vy += Math.sin(butterflyState.t * 18) * 8;
+  }
+
+  if (butterflyState.capturePending) {
+    vx *= 0.22;
+    vy *= 0.18;
+  }
 
   butterflyState.x += vx * dt;
   butterflyState.y += vy * dt;
   butterflyState.dirX = vx >= 0 ? 1 : -1;
-  butterflyState.bankAngle = clamp(vx * 0.09 + vy * 0.05, -18, 18);
-  butterflyState.lift = Math.sin(butterflyState.t * 5.2) * (motion.bobAmp * 0.16);
+  butterflyState.bankAngle = clamp(vx * 0.08 + vy * 0.04, -16, 16);
+  butterflyState.lift = Math.sin(butterflyState.t * 5.2) * (motion.bobAmp * 0.12);
+  butterflyState.lastVx = vx;
+  butterflyState.lastVy = vy;
+
+  updateRigPose(dt, headingAdjust, vx, vy);
   placeButterfly();
 }
 
@@ -428,25 +752,34 @@ function segmentDistanceToPoint(ax, ay, bx, by, px, py) {
   return Math.hypot(px - nearestX, py - nearestY);
 }
 
-function handleCaptureSuccess(trigger) {
-  if (!butterflyState.alive || !currentButterfly) return;
-  butterflyState.alive = false;
-  butterflyFigure.classList.add('capture-hit');
-  setStatus(trigger === 'shake' ? '实验甩动捕获成功' : '捕捉完成，正在揭晓');
-  showToast(`${currentButterfly.name} 已被捕捉`);
-  if (navigator.vibrate) navigator.vibrate([40, 28, 72]);
-  drawBurst(butterflyState.x, butterflyState.y, currentButterfly.palette.wingB);
+function triggerStartledEscape(originX, originY) {
+  if (!currentButterfly || !butterflyState.alive || butterflyState.capturePending || butterflyState.nearMissCooldown > 0) return;
 
-  setTimeout(() => {
-    butterflyFigure.classList.remove('capture-hit');
-    butterfly.classList.add('hidden');
-    resultBadge.textContent = rarityLabel(currentButterfly.rarity);
-    resultTitle.textContent = `你抓到了${currentButterfly.name}`;
-    resultMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity}`;
-    resultFlavor.textContent = currentButterfly.flavor;
-    resultCard.classList.remove('hidden');
-    specimenMeta.textContent = `已完成捕捉 · ${currentButterfly.role} · ${currentButterfly.rarity}`;
-  }, 320);
+  const awayX = butterflyState.x - originX;
+  const awayY = butterflyState.y - originY;
+  butterflyState.hoverRemaining = 0;
+  butterflyState.startleUntil = rand(0.38, 0.56);
+  butterflyState.nearMissCooldown = 0.34;
+  butterflyState.escapeBoost = rand(8, 16);
+  butterflyState.targetHeading = Math.atan2(awayY + rand(-28, 28), awayX + rand(-28, 28));
+  butterflyState.targetSpeed = currentButterfly.motion.baseSpeed + currentButterfly.motion.speedJitter * 1.45;
+  setMotionState(MOTION_STATES.STARTLED_ESCAPE);
+  butterfly.classList.add('miss');
+  setTimeout(() => butterfly.classList.remove('miss'), 280);
+}
+
+function handleCaptureSuccess(trigger) {
+  if (!butterflyState.alive || !currentButterfly || butterflyState.capturePending) return;
+
+  butterflyState.capturePending = true;
+  butterflyState.staggerUntil = 0.3;
+  butterflyState.hoverRemaining = 0;
+  butterflyState.escapeBoost = 0;
+  setMotionState(MOTION_STATES.CAPTURED_STAGGER);
+  setStatus(trigger === 'shake' ? '实验甩动捕获成功' : '命中成功，蝴蝶正在失稳');
+  showToast(`${currentButterfly.name} 已被命中`);
+  if (navigator.vibrate) navigator.vibrate([24, 18, 46]);
+  updateSpecimenCard();
 }
 
 function handleCaptureFail(reason = 'miss') {
@@ -455,6 +788,10 @@ function handleCaptureFail(reason = 'miss') {
   butterfly.classList.add('miss');
   showToast(reason === 'weak_shake' ? '动作太轻，或蝴蝶不在锁定圈内' : '划得再快一点，尽量掠过飞行中心');
   setTimeout(() => butterfly.classList.remove('miss'), 280);
+
+  if (reason === 'weak_shake' && butterflyState.alive && !butterflyState.capturePending) {
+    triggerStartledEscape(window.innerWidth * 0.5, window.innerHeight * 0.36);
+  }
 }
 
 function drawBurst(x, y, accentColor) {
@@ -507,7 +844,7 @@ function onPointerMove(clientX, clientY) {
     return;
   }
 
-  if (mode === 'swipe' && butterflyState.alive) {
+  if (mode === 'swipe' && butterflyState.alive && !butterflyState.capturePending) {
     const dt = Math.max(1, now - lastPointer.t);
     const distance = Math.hypot(clientX - lastPointer.x, clientY - lastPointer.y);
     const speed = distance / dt;
@@ -522,6 +859,12 @@ function onPointerMove(clientX, clientY) {
 
     if (speed > 0.62 && trackDistance <= butterflyState.captureRadius) {
       handleCaptureSuccess('swipe');
+    } else if (
+      speed > 0.52
+      && trackDistance <= butterflyState.captureRadius * 1.7
+      && trackDistance > butterflyState.captureRadius
+    ) {
+      triggerStartledEscape(clientX, clientY);
     }
   }
 
@@ -575,13 +918,11 @@ async function setMode(nextMode) {
 
   if (mode === 'swipe') {
     setStatus(running ? '滑动主流程已启用' : '等待开始');
+  } else if (motionPermission === 'granted') {
+    setStatus('实验甩动模式已启用');
+    showToast('将蝴蝶引入中央圆环后，再快速甩动手机');
   } else {
-    if (motionPermission === 'granted') {
-      setStatus('实验甩动模式已启用');
-      showToast('将蝴蝶引入中央圆环后，再快速甩动手机');
-    } else {
-      setStatus('甩动不可用，建议继续滑动主流程');
-    }
+    setStatus('甩动不可用，建议继续滑动主流程');
   }
 
   updateSpecimenCard();
@@ -605,7 +946,7 @@ window.addEventListener('touchend', () => { lastPointer = null; }, { passive: tr
 window.addEventListener('mouseup', () => { lastPointer = null; });
 
 window.addEventListener('devicemotion', (event) => {
-  if (mode !== 'shake' || motionPermission !== 'granted' || !butterflyState.alive || shakeCooldown) return;
+  if (mode !== 'shake' || motionPermission !== 'granted' || !butterflyState.alive || butterflyState.capturePending || shakeCooldown) return;
   const acceleration = event.accelerationIncludingGravity || event.acceleration;
   if (!acceleration) return;
 
