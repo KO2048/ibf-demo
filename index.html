@@ -17,99 +17,32 @@
     <div class="topbar">
       <div class="brand-group">
         <div class="brand">ifafa demo</div>
-        <div class="brand-subtitle">雷达锁定捕获 V1</div>
+        <div class="brand-subtitle">单机版飞行捕捉 MVP</div>
       </div>
       <div id="status" class="status">等待开始</div>
     </div>
 
     <div class="flight-card">
-      <div class="eyebrow">当前轮次</div>
-      <div id="specimenName" class="specimen-name">等待测试轮开始</div>
-      <div id="specimenMeta" class="specimen-meta">点击开始后进入雷达搜索，锁定后才会真正现身。</div>
-    </div>
-
-    <div id="hudPanel" class="hud-panel hidden">
-      <div class="hud-grid">
-        <div class="meter-card">
-          <div class="meter-header">
-            <span>雷达信号</span>
-            <strong id="signalValue">弱</strong>
-          </div>
-          <div class="meter-shell">
-            <div id="signalFill" class="meter-fill meter-fill-signal"></div>
-          </div>
-        </div>
-
-        <div class="meter-card">
-          <div class="meter-header">
-            <span>锁定进度</span>
-            <strong id="lockValue">0%</strong>
-          </div>
-          <div class="meter-shell">
-            <div id="lockFill" class="meter-fill meter-fill-lock"></div>
-          </div>
-        </div>
-
-        <div id="trackCard" class="meter-card">
-          <div class="meter-header">
-            <span>压圈进度</span>
-            <strong id="trackValue">0%</strong>
-          </div>
-          <div class="meter-shell">
-            <div id="trackFill" class="meter-fill meter-fill-track"></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="chip-row">
-        <div class="chip-card">
-          <span>警觉</span>
-          <strong id="alertValue">0 / 3</strong>
-        </div>
-        <div class="chip-card">
-          <span>测试网</span>
-          <strong id="netsValue">5</strong>
-        </div>
-      </div>
+      <div class="eyebrow">当前目标</div>
+      <div id="specimenName" class="specimen-name">等待蝴蝶出现</div>
+      <div id="specimenMeta" class="specimen-meta">点击开始后进入观察状态</div>
     </div>
 
     <div id="butterfly" class="hidden" aria-label="butterfly">
       <div class="butterfly-shadow"></div>
       <div id="butterflyFigure" class="butterfly-figure">
-        <div id="butterflyRig" class="butterfly-rig">
-          <div class="butterfly-part part-wing-back-left"></div>
-          <div class="butterfly-part part-wing-back-right"></div>
-          <div class="butterfly-part part-body"></div>
-          <div class="butterfly-part part-wing-front-left"></div>
-          <div class="butterfly-part part-wing-front-right"></div>
+        <img id="butterflySprite" class="butterfly-sprite hidden" alt="butterfly sprite" />
+        <div id="butterflyArt" class="butterfly-art">
+          <div class="wing wing-back left"></div>
+          <div class="wing wing-front left"></div>
+          <div class="body"></div>
+          <div class="wing wing-back right"></div>
+          <div class="wing wing-front right"></div>
         </div>
       </div>
     </div>
 
-    <div id="reticle" class="reticle hidden" aria-hidden="true">
-      <div class="reticle-sweep"></div>
-      <div class="reticle-ring reticle-ring-outer"></div>
-      <div class="reticle-ring reticle-ring-middle"></div>
-      <div class="reticle-ring reticle-ring-inner"></div>
-      <div class="reticle-crosshair reticle-crosshair-h"></div>
-      <div class="reticle-crosshair reticle-crosshair-v"></div>
-      <div class="reticle-core"></div>
-      <div id="reticleLabel" class="reticle-label">SEARCH</div>
-    </div>
-
-    <div id="throwPanel" class="throw-panel hidden">
-      <div class="throw-top">
-        <div id="throwTitle" class="throw-title">撒网窗口</div>
-        <div id="throwHint" class="throw-hint">观察光标往返节奏，在有效区内出手。</div>
-      </div>
-      <div class="timing-shell">
-        <div id="timingZone" class="timing-zone"></div>
-        <div id="perfectZone" class="perfect-zone"></div>
-        <div id="timingCursor" class="timing-cursor"></div>
-      </div>
-      <button id="throwBtn" class="primary-btn throw-btn">撒网</button>
-    </div>
-
+    <div id="reticle" class="hidden"></div>
     <div id="toast" class="toast hidden"></div>
 
     <div id="resultCard" class="result-card hidden">
@@ -122,16 +55,16 @@
       </div>
     </div>
 
-    <div id="bottomPanel" class="bottom-panel">
+    <div class="bottom-panel">
       <button id="startBtn" class="primary-btn">开始体验</button>
       <div class="modes">
-        <button id="huntModeBtn" class="mode-btn active">雷达捕捉</button>
-        <button id="shakeModeBtn" class="mode-btn">实验甩动</button>
+        <button id="swipeModeBtn" class="mode-btn active">滑动捕捉</button>
+        <button id="shakeModeBtn" class="mode-btn">实验模式：甩动</button>
       </div>
-      <div id="phaseHint" class="hint">
-        <div>1. 点击“开始体验”后允许相机权限。</div>
-        <div>2. 按住屏幕拖动准星，找到强信号后持续锁定。</div>
-        <div>3. 压圈完成后进入撒网时机条，再看准时机出手。</div>
+      <div class="hint">
+        <div>1. 点击“开始体验”后允许相机权限，默认用滑动完成捕捉。</div>
+        <div>2. 快速划过蝴蝶飞行路径，速度足够时可完成抓取。</div>
+        <div>3. 甩动模式是次级实验项；若动作权限被拒绝，滑动主流程仍可正常演示。</div>
       </div>
     </div>
   </div>
