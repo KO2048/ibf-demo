@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>ifafa Demo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <video id="camera" playsinline autoplay muted></video>
+    <canvas id="fx"></canvas>
+
+    <div class="ambient-glow"></div>
+
+    <div class="topbar">
+      <div class="brand-group">
+        <div class="brand">ifafa demo</div>
+        <div class="brand-subtitle">单机版飞行捕捉 MVP</div>
+      </div>
+      <div id="status" class="status">等待开始</div>
+    </div>
+
+    <div class="flight-card">
+      <div class="eyebrow">当前目标</div>
+      <div id="specimenName" class="specimen-name">等待蝴蝶出现</div>
+      <div id="specimenMeta" class="specimen-meta">点击开始后进入观察状态</div>
+    </div>
+
+    <div id="butterfly" class="hidden" aria-label="butterfly">
+      <div class="butterfly-shadow"></div>
+      <div id="butterflyFigure" class="butterfly-figure">
+        <img id="butterflySprite" class="butterfly-sprite hidden" alt="butterfly sprite" />
+        <div id="butterflyArt" class="butterfly-art">
+          <div class="wing wing-back left"></div>
+          <div class="wing wing-front left"></div>
+          <div class="body"></div>
+          <div class="wing wing-back right"></div>
+          <div class="wing wing-front right"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="reticle" class="hidden"></div>
+    <div id="toast" class="toast hidden"></div>
+
+    <div id="resultCard" class="result-card hidden">
+      <div id="resultBadge" class="result-badge">捕获成功</div>
+      <div id="resultTitle" class="result-title">你抓到了暮光蝶</div>
+      <div id="resultMeta" class="result-meta">轻快型 · Common</div>
+      <div id="resultFlavor" class="result-flavor">它像一片被阳光唤醒的叶子，在你面前轻轻拐了一个弯。</div>
+      <div class="result-actions">
+        <button id="continueBtn" class="secondary-btn">继续探索</button>
+      </div>
+    </div>
+
+    <div class="bottom-panel">
+      <button id="startBtn" class="primary-btn">开始体验</button>
+      <div class="modes">
+        <button id="swipeModeBtn" class="mode-btn active">滑动捕捉</button>
+        <button id="shakeModeBtn" class="mode-btn">实验模式：甩动</button>
+      </div>
+      <div class="hint">
+        <div>1. 点击“开始体验”后允许相机权限，默认用滑动完成捕捉。</div>
+        <div>2. 快速划过蝴蝶飞行路径，速度足够时可完成抓取。</div>
+        <div>3. 甩动模式是次级实验项；若动作权限被拒绝，滑动主流程仍可正常演示。</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
