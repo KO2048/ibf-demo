@@ -1,3 +1,25 @@
+const PHASES = {
+  IDLE: 'idle',
+  SEARCH: 'search',
+  MATERIALIZE: 'materialize',
+  TRACK: 'track',
+  THROW: 'throwTiming',
+  SUCCESS: 'success',
+  ESCAPE: 'escape',
+  OUT_OF_NETS: 'outOfNets',
+};
+
+const MODES = {
+  HUNT: 'hunt',
+  SHAKE: 'shake',
+};
+
+const DEFAULT_NETS = 5;
+const GRAZE_MARGIN = 6;
+const RETICLE_SIZE = 148;
+const TRACK_RADIUS = 58;
+
+const app = document.getElementById('app');
 const video = document.getElementById('camera');
 const canvas = document.getElementById('fx');
 const ctx = canvas.getContext('2d');
@@ -12,10 +34,30 @@ const wingBackRightPart = butterflyRig.querySelector('.part-wing-back-right');
 const statusEl = document.getElementById('status');
 const specimenName = document.getElementById('specimenName');
 const specimenMeta = document.getElementById('specimenMeta');
+const hudPanel = document.getElementById('hudPanel');
+const signalFill = document.getElementById('signalFill');
+const signalValue = document.getElementById('signalValue');
+const lockFill = document.getElementById('lockFill');
+const lockValue = document.getElementById('lockValue');
+const trackCard = document.getElementById('trackCard');
+const trackFill = document.getElementById('trackFill');
+const trackValue = document.getElementById('trackValue');
+const alertValue = document.getElementById('alertValue');
+const netsValue = document.getElementById('netsValue');
 const startBtn = document.getElementById('startBtn');
-const swipeModeBtn = document.getElementById('swipeModeBtn');
+const huntModeBtn = document.getElementById('huntModeBtn');
 const shakeModeBtn = document.getElementById('shakeModeBtn');
+const phaseHint = document.getElementById('phaseHint');
+const bottomPanel = document.getElementById('bottomPanel');
 const reticle = document.getElementById('reticle');
+const reticleLabel = document.getElementById('reticleLabel');
+const throwPanel = document.getElementById('throwPanel');
+const throwTitle = document.getElementById('throwTitle');
+const throwHint = document.getElementById('throwHint');
+const timingZone = document.getElementById('timingZone');
+const perfectZone = document.getElementById('perfectZone');
+const timingCursor = document.getElementById('timingCursor');
+const throwBtn = document.getElementById('throwBtn');
 const toast = document.getElementById('toast');
 const resultCard = document.getElementById('resultCard');
 const resultBadge = document.getElementById('resultBadge');
@@ -35,6 +77,12 @@ const butterflyCatalog = [
     weight: 0.45,
     size: 118,
     captureRadius: 58,
+    signalDifficulty: 0.84,
+    trackHoldMs: 650,
+    timingWindowSize: 20,
+    timingCursorSpeed: 72,
+    alertMax: 3,
+    falseSignalChance: 0.04,
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_54 PM (1) Background Removed.png',
     palette: {
       wingA: '#fff0b1',
@@ -67,6 +115,12 @@ const butterflyCatalog = [
     weight: 0.35,
     size: 104,
     captureRadius: 52,
+    signalDifficulty: 1.02,
+    trackHoldMs: 850,
+    timingWindowSize: 14,
+    timingCursorSpeed: 90,
+    alertMax: 3,
+    falseSignalChance: 0.18,
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_55 PM (3) Background Removed.png',
     palette: {
       wingA: '#f2f3ff',
@@ -99,6 +153,12 @@ const butterflyCatalog = [
     weight: 0.2,
     size: 134,
     captureRadius: 66,
+    signalDifficulty: 1.18,
+    trackHoldMs: 1100,
+    timingWindowSize: 9,
+    timingCursorSpeed: 108,
+    alertMax: 3,
+    falseSignalChance: 0.42,
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_55 PM (2) Background Removed.png',
     palette: {
       wingA: '#fff2d9',
@@ -123,17 +183,18 @@ const butterflyCatalog = [
   },
 ];
 
-let mode = 'swipe';
+let mode = MODES.HUNT;
 let motionPermission = 'idle';
 let stream;
 let cameraReady = false;
 let running = false;
 let shakeCooldown = false;
-let swipeTrail = [];
-let lastPointer = null;
 let lastFrameAt = 0;
 let currentButterfly = null;
 let butterflyState = createEmptyButterflyState();
+let encounter = createEncounterState();
+let fxParticles = [];
+let revealResultTimer = 0;
 
 function createEmptyButterflyState() {
   return {
@@ -163,6 +224,34 @@ function createEmptyButterflyState() {
   };
 }
 
+function createEncounterState() {
+  return {
+    phase: PHASES.IDLE,
+    reticleX: window.innerWidth * 0.5,
+    reticleY: window.innerHeight * 0.42,
+    pointerActive: false,
+    pointerId: null,
+    signalStrength: 0,
+    lockProgress: 0,
+    trackProgress: 0,
+    materializeRemaining: 0,
+    netsRemaining: DEFAULT_NETS,
+    alertLevel: 0,
+    signalTarget: null,
+    signalNoise: 0,
+    falseSignal: null,
+    falseSignalUsed: false,
+    currentSignalLabel: '弱',
+    throwCursor: 14,
+    throwDirection: 1,
+    throwZoneCenter: 50,
+    throwWindowSize: 20,
+    perfectWindowSize: 8,
+    lastJudgement: '',
+    signalSparkCooldown: 0,
+  };
+}
+
 function rand(min, max) {
   return Math.random() * (max - min) + min;
 }
@@ -171,12 +260,22 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
 function resize() {
   canvas.width = window.innerWidth * devicePixelRatio;
   canvas.height = window.innerHeight * devicePixelRatio;
   canvas.style.width = `${window.innerWidth}px`;
   canvas.style.height = `${window.innerHeight}px`;
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+
+  const bounded = clampReticle(encounter.reticleX, encounter.reticleY);
+  encounter.reticleX = bounded.x;
+  encounter.reticleY = bounded.y;
+  placeButterfly();
+  renderReticle();
 }
 
 function setStatus(message) {
@@ -240,22 +339,219 @@ async function ensureMotionPermission() {
   return false;
 }
 
-function rarityLabel(rarity) {
-  if (rarity === 'Epic') return '稀有发现';
+function rarityLabel(rarity, verdict = 'Good') {
+  if (verdict === 'Perfect') return 'Perfect 捕获';
+  if (rarity === 'Epic') return '稀有捕获';
   if (rarity === 'Rare') return '稳定捕获';
   return '捕获成功';
 }
 
-function updateSpecimenCard() {
-  if (!running || !currentButterfly) {
-    specimenName.textContent = '等待蝴蝶出现';
-    specimenMeta.textContent = '点击开始后进入观察状态';
+function getReticleBounds() {
+  const half = RETICLE_SIZE * 0.5;
+  const top = Math.max(124, 88 + (window.visualViewport?.offsetTop || 0));
+  const bottomReserved = Math.max(232, bottomPanel.offsetHeight + 84);
+  const bottom = window.innerHeight - bottomReserved;
+  return {
+    minX: half + 14,
+    maxX: window.innerWidth - half - 14,
+    minY: top + half,
+    maxY: Math.max(top + half, bottom - half),
+  };
+}
+
+function clampReticle(x, y) {
+  const bounds = getReticleBounds();
+  return {
+    x: clamp(x, bounds.minX, bounds.maxX),
+    y: clamp(y, bounds.minY, bounds.maxY),
+  };
+}
+
+function getPlayfieldBounds() {
+  const reticleBounds = getReticleBounds();
+  return {
+    left: reticleBounds.minX,
+    right: reticleBounds.maxX,
+    top: reticleBounds.minY,
+    bottom: reticleBounds.maxY,
+  };
+}
+
+function placeButterfly() {
+  butterfly.style.left = `${butterflyState.x}px`;
+  butterfly.style.top = `${butterflyState.y}px`;
+  butterfly.style.setProperty('--dir-x', butterflyState.dirX);
+  butterfly.style.setProperty('--flight-tilt', `${butterflyState.bankAngle}deg`);
+  butterfly.style.setProperty('--bank-angle', `${clamp(butterflyState.bankAngle * 0.55, -14, 14)}deg`);
+  butterfly.style.setProperty('--lift', `${butterflyState.lift}px`);
+}
+
+function renderReticle() {
+  reticle.style.left = `${encounter.reticleX}px`;
+  reticle.style.top = `${encounter.reticleY}px`;
+  reticle.style.setProperty('--signal-strength', encounter.signalStrength.toFixed(3));
+  reticle.style.setProperty('--lock-progress', encounter.lockProgress.toFixed(3));
+  reticle.style.setProperty('--track-progress', encounter.trackProgress.toFixed(3));
+  reticle.classList.toggle('hidden', ![
+    PHASES.SEARCH,
+    PHASES.MATERIALIZE,
+    PHASES.TRACK,
+    PHASES.THROW,
+  ].includes(encounter.phase));
+  reticle.classList.toggle('is-focused', encounter.pointerActive && encounter.phase === PHASES.SEARCH);
+  reticle.classList.toggle('is-track', encounter.phase === PHASES.TRACK);
+  reticle.classList.toggle('is-throw', encounter.phase === PHASES.THROW);
+
+  if (encounter.phase === PHASES.SEARCH) reticleLabel.textContent = 'SEARCH';
+  if (encounter.phase === PHASES.MATERIALIZE) reticleLabel.textContent = 'LOCKED';
+  if (encounter.phase === PHASES.TRACK) reticleLabel.textContent = 'TRACK';
+  if (encounter.phase === PHASES.THROW) reticleLabel.textContent = 'THROW';
+}
+
+function updateHint(lines) {
+  phaseHint.innerHTML = lines.map((line) => `<div>${line}</div>`).join('');
+}
+
+function updatePhaseHint() {
+  if (encounter.phase === PHASES.IDLE) {
+    updateHint([
+      '1. 点击“开始体验”后允许相机权限。',
+      '2. 按住屏幕拖动准星，找到强信号后持续锁定。',
+      '3. 压圈完成后进入撒网时机条，再看准时机出手。',
+    ]);
     return;
   }
 
-  specimenName.textContent = currentButterfly.name;
-  const modeCopy = mode === 'swipe' ? '滑动主流程已就绪' : '实验甩动模式已启用';
-  specimenMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity} · ${modeCopy}`;
+  if (encounter.phase === PHASES.SEARCH) {
+    updateHint([
+      '1. 按住屏幕拖动准星扫描，信号越强越接近真实目标。',
+      '2. 只有强信号时锁定条才会持续上涨，松手会缓慢回退。',
+      '3. Rare 和 Epic 会出现抖动或假峰值，不要被瞬时强信号骗到。',
+    ]);
+    return;
+  }
+
+  if (encounter.phase === PHASES.MATERIALIZE) {
+    updateHint([
+      '1. 信号刚刚实体化，准星不要移得太远。',
+      '2. 蝶影会短暂稳定，准备直接进入压圈追踪。',
+      mode === MODES.SHAKE
+        ? '3. 实验甩动已启用，但本轮主节奏仍然是先压圈。'
+        : '3. 接下来需要把蝴蝶稳定留在准星内，压圈满了才有撒网资格。',
+    ]);
+    return;
+  }
+
+  if (encounter.phase === PHASES.TRACK) {
+    updateHint([
+      '1. 把蝴蝶稳定留在准星内，压圈会持续上涨，脱圈则回退。',
+      '2. 警觉越高，蝴蝶越容易提速和变向。',
+      mode === MODES.SHAKE
+        ? '3. 实验甩动可在准星内直接尝试，但不保证比正常撒网更稳。'
+        : '3. 压圈满后会打开撒网时机条，再用 timing 把它收进去。',
+    ]);
+    return;
+  }
+
+  if (encounter.phase === PHASES.THROW) {
+    updateHint([
+      '1. 光标会高速往返移动，别急着点。',
+      '2. 落在绿色中心区是 Perfect，落在黄色有效区是 Good。',
+      '3. 擦网和 Miss 都会提高警觉；测试网耗尽或警觉爆表，本轮直接失败。',
+    ]);
+    return;
+  }
+
+  updateHint([
+    '1. 结果卡会总结本轮表现。',
+    '2. 点击下方按钮可立即开始下一轮测试。',
+    '3. 主流程保持在相机画面内，不会跳去独立遭遇场景。',
+  ]);
+}
+
+function updateSpecimenCard() {
+  if (!running || !currentButterfly || encounter.phase === PHASES.IDLE) {
+    specimenName.textContent = '等待测试轮开始';
+    specimenMeta.textContent = '点击开始后进入雷达搜索，锁定后才会真正现身。';
+    return;
+  }
+
+  if (encounter.phase === PHASES.SEARCH) {
+    specimenName.textContent = '未知蝶群信号';
+    specimenMeta.textContent = `雷达搜索中 · 测试网 ${encounter.netsRemaining} · 警觉 ${encounter.alertLevel}/${currentButterfly.alertMax}`;
+    return;
+  }
+
+  if (encounter.phase === PHASES.MATERIALIZE) {
+    specimenName.textContent = '蝶影显形中';
+    specimenMeta.textContent = `${currentButterfly.rarity} 信号已锁定 · 准备压圈追踪`;
+    return;
+  }
+
+  if (encounter.phase === PHASES.TRACK) {
+    specimenName.textContent = currentButterfly.name;
+    specimenMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity} · 压圈 ${Math.round(encounter.trackProgress * 100)}%`;
+    return;
+  }
+
+  if (encounter.phase === PHASES.THROW) {
+    specimenName.textContent = currentButterfly.name;
+    specimenMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity} · 撒网窗口已开启`;
+    return;
+  }
+
+  if (encounter.phase === PHASES.SUCCESS) {
+    specimenName.textContent = currentButterfly.name;
+    specimenMeta.textContent = `已完成捕获 · ${currentButterfly.role} · ${currentButterfly.rarity}`;
+    return;
+  }
+
+  if (encounter.phase === PHASES.ESCAPE) {
+    specimenName.textContent = `${currentButterfly.name} 已逃逸`;
+    specimenMeta.textContent = `警觉拉满 · ${currentButterfly.role} · 本轮结束`;
+    return;
+  }
+
+  specimenName.textContent = '测试网耗尽';
+  specimenMeta.textContent = `${currentButterfly.name} 仍未捕获 · 重开测试轮继续尝试`;
+}
+
+function updateHud() {
+  hudPanel.classList.toggle('hidden', !running || encounter.phase === PHASES.IDLE);
+  signalFill.style.width = `${Math.round(encounter.signalStrength * 100)}%`;
+  signalValue.textContent = encounter.currentSignalLabel;
+  lockFill.style.width = `${Math.round(encounter.lockProgress * 100)}%`;
+  lockValue.textContent = `${Math.round(encounter.lockProgress * 100)}%`;
+  trackFill.style.width = `${Math.round(encounter.trackProgress * 100)}%`;
+  trackValue.textContent = `${Math.round(encounter.trackProgress * 100)}%`;
+  alertValue.textContent = `${encounter.alertLevel} / ${currentButterfly?.alertMax || 3}`;
+  netsValue.textContent = `${encounter.netsRemaining}`;
+  trackCard.classList.toggle('is-dimmed', ![PHASES.MATERIALIZE, PHASES.TRACK, PHASES.THROW].includes(encounter.phase));
+}
+
+function renderThrowPanel() {
+  const active = encounter.phase === PHASES.THROW;
+  throwPanel.classList.toggle('hidden', !active);
+  throwBtn.disabled = !active;
+  if (!active) return;
+
+  throwTitle.textContent = mode === MODES.SHAKE && motionPermission === 'granted' ? '撒网窗口 / 可甩动' : '撒网窗口';
+  throwHint.textContent = encounter.lastJudgement
+    ? `上次判定：${encounter.lastJudgement}`
+    : '观察光标往返节奏，在有效区内出手。';
+
+  const zoneLeft = encounter.throwZoneCenter - encounter.throwWindowSize * 0.5;
+  const perfectLeft = encounter.throwZoneCenter - encounter.perfectWindowSize * 0.5;
+  timingZone.style.left = `${zoneLeft}%`;
+  timingZone.style.width = `${encounter.throwWindowSize}%`;
+  perfectZone.style.left = `${perfectLeft}%`;
+  perfectZone.style.width = `${encounter.perfectWindowSize}%`;
+  timingCursor.style.left = `${encounter.throwCursor}%`;
+}
+
+function updateModeButtons() {
+  huntModeBtn.classList.toggle('active', mode === MODES.HUNT);
+  shakeModeBtn.classList.toggle('active', mode === MODES.SHAKE);
 }
 
 function applyButterflyVariant(variant) {
@@ -275,8 +571,6 @@ function applyButterflyVariant(variant) {
   wingFrontRightPart.style.backgroundImage = sharedSource;
   wingBackLeftPart.style.backgroundImage = sharedSource;
   wingBackRightPart.style.backgroundImage = sharedSource;
-
-  updateSpecimenCard();
 }
 
 function pickButterflyVariant() {
@@ -289,31 +583,91 @@ function pickButterflyVariant() {
   return butterflyCatalog[0];
 }
 
-function placeButterfly() {
-  butterfly.style.left = `${butterflyState.x}px`;
-  butterfly.style.top = `${butterflyState.y}px`;
-  butterfly.style.setProperty('--dir-x', butterflyState.dirX);
-  butterfly.style.setProperty('--flight-tilt', `${butterflyState.bankAngle}deg`);
-  butterfly.style.setProperty('--bank-angle', `${clamp(butterflyState.bankAngle * 0.55, -14, 14)}deg`);
-  butterfly.style.setProperty('--lift', `${butterflyState.lift}px`);
+function createSignalPoint(avoidX, avoidY) {
+  const bounds = getPlayfieldBounds();
+  let x = bounds.left;
+  let y = bounds.top;
+  let attempts = 0;
+
+  while (attempts < 24) {
+    x = rand(bounds.left, bounds.right);
+    y = rand(bounds.top, bounds.bottom);
+    if (Math.hypot(x - avoidX, y - avoidY) > 160) break;
+    attempts += 1;
+  }
+
+  return { x, y };
 }
 
-function spawnButterfly() {
+function prepareSignalField() {
+  const center = clampReticle(window.innerWidth * 0.5, window.innerHeight * 0.42);
+  const trueSignal = createSignalPoint(center.x, center.y);
+  const falseSignalEnabled = Math.random() < currentButterfly.falseSignalChance;
+  let falseSignal = null;
+
+  if (falseSignalEnabled) {
+    const point = createSignalPoint(trueSignal.x, trueSignal.y);
+    falseSignal = {
+      x: point.x,
+      y: point.y,
+      delay: rand(0.4, 1.3),
+      duration: rand(0.5, 0.95),
+      active: false,
+      consumed: false,
+    };
+  }
+
+  encounter.signalTarget = trueSignal;
+  encounter.falseSignal = falseSignal;
+  encounter.falseSignalUsed = false;
+}
+
+function startNewRound() {
   const variant = pickButterflyVariant();
   applyButterflyVariant(variant);
-  const centerBias = rand(0.32, 0.68);
+  encounter = createEncounterState();
+  butterflyState = createEmptyButterflyState();
+  encounter.phase = PHASES.SEARCH;
+  const reticleStart = clampReticle(window.innerWidth * 0.5, window.innerHeight * 0.42);
+  encounter.reticleX = reticleStart.x;
+  encounter.reticleY = reticleStart.y;
+  encounter.throwWindowSize = variant.timingWindowSize;
+  encounter.perfectWindowSize = variant.timingWindowSize * 0.4;
+  prepareSignalField();
+  clearTimeout(revealResultTimer);
+  fxParticles = [];
+  butterfly.classList.add('hidden');
+  butterfly.classList.remove('materializing');
+  butterflyFigure.classList.remove('capture-hit');
+  resultCard.classList.add('hidden');
+  resultCard.classList.remove('is-failure', 'is-perfect');
+  continueBtn.textContent = '继续探索';
+  encounter.lastJudgement = '';
+  setStatus('拖动准星搜索蝴蝶雷达信号');
+  startBtn.textContent = '重开测试轮';
+  showToast('雷达已启动，按住屏幕拖动准星寻找强信号', 2200);
+  updateModeButtons();
+  updatePhaseHint();
+  updateSpecimenCard();
+  updateHud();
+  renderThrowPanel();
+  renderReticle();
+}
+
+function seedButterflyAtSignal() {
+  const target = encounter.signalTarget;
   butterflyState = {
-    x: window.innerWidth * centerBias,
-    y: window.innerHeight * rand(0.24, 0.52),
-    heading: rand(-0.55, 0.55),
-    targetHeading: rand(-0.7, 0.7),
-    speed: variant.motion.baseSpeed * 0.8,
-    targetSpeed: variant.motion.baseSpeed,
+    x: target.x,
+    y: target.y,
+    heading: rand(-0.2, 0.2),
+    targetHeading: rand(-0.4, 0.4),
+    speed: currentButterfly.motion.baseSpeed * 0.24,
+    targetSpeed: currentButterfly.motion.baseSpeed * 0.35,
     t: 0,
     alive: true,
     visible: true,
-    hoverRemaining: 0,
-    nextDecisionIn: rand(...variant.motion.decisionWindow),
+    hoverRemaining: 0.6,
+    nextDecisionIn: rand(...currentButterfly.motion.decisionWindow),
     motionState: 'hover_idle',
     motionStateTime: 0,
     startledRemaining: 0,
@@ -325,22 +679,253 @@ function spawnButterfly() {
     dirX: Math.random() > 0.5 ? 1 : -1,
     bankAngle: 0,
     lift: 0,
-    captureRadius: variant.captureRadius,
+    captureRadius: currentButterfly.captureRadius,
   };
   butterfly.classList.remove('hidden');
-  resultCard.classList.add('hidden');
-  setStatus(mode === 'swipe' ? '观察飞行轨迹后滑动捕捉' : '蝴蝶已出现，可切回滑动或测试甩动');
-  updateSpecimenCard();
+  butterfly.classList.add('materializing');
   placeButterfly();
 }
 
-function respawnButterfly() {
-  spawnButterfly();
-  swipeTrail = [];
-  lastPointer = null;
-  butterflyFigure.classList.remove('capture-hit');
-  butterfly.classList.remove('miss');
-  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+function beginMaterialize() {
+  encounter.phase = PHASES.MATERIALIZE;
+  encounter.materializeRemaining = rand(0.62, 0.8);
+  encounter.lockProgress = 1;
+  encounter.currentSignalLabel = '锁定';
+  seedButterflyAtSignal();
+  emitParticles(encounter.signalTarget.x, encounter.signalTarget.y, currentButterfly.palette.wingC, 18, {
+    speedMin: 28,
+    speedMax: 110,
+    lifeMin: 0.25,
+    lifeMax: 0.7,
+    sizeMin: 1.4,
+    sizeMax: 3.2,
+  });
+  setStatus('锁定完成，蝶影正在显形');
+  showToast('目标现身，下一步把它压进准星', 1600);
+  updatePhaseHint();
+}
+
+function beginTrack() {
+  encounter.phase = PHASES.TRACK;
+  encounter.trackProgress = 0;
+  encounter.currentSignalLabel = '追踪';
+  butterfly.classList.remove('materializing');
+  setStatus(mode === MODES.SHAKE && motionPermission === 'granted'
+    ? '保持目标在准星内，实验甩动随时可试'
+    : '把蝴蝶稳定留在准星内，压圈满后才可撒网');
+  updatePhaseHint();
+}
+
+function configureThrowWindow() {
+  const zoneSize = currentButterfly.timingWindowSize;
+  const minCenter = zoneSize * 0.5 + GRAZE_MARGIN + 6;
+  const maxCenter = 100 - zoneSize * 0.5 - GRAZE_MARGIN - 6;
+  encounter.throwWindowSize = zoneSize;
+  encounter.perfectWindowSize = zoneSize * 0.4;
+  encounter.throwZoneCenter = rand(minCenter, maxCenter);
+  encounter.throwCursor = rand(10, 90);
+  encounter.throwDirection = Math.random() > 0.5 ? 1 : -1;
+}
+
+function beginThrowTiming() {
+  encounter.phase = PHASES.THROW;
+  encounter.trackProgress = 1;
+  encounter.lastJudgement = '';
+  encounter.currentSignalLabel = '出手';
+  encounter.pointerActive = false;
+  encounter.pointerId = null;
+  configureThrowWindow();
+  butterflyState.hoverRemaining = 0.8;
+  butterflyState.targetSpeed = currentButterfly.motion.baseSpeed * 0.12;
+  butterflyState.speed *= 0.42;
+  butterflyState.targetHeading += rand(-0.08, 0.08);
+  setStatus(mode === MODES.SHAKE && motionPermission === 'granted'
+    ? '出手窗口已打开，也可以直接试验甩动'
+    : '时机窗口已打开，看准条内节奏再撒网');
+  showToast('撒网窗口开启，黄色有效区内出手', 1500);
+  updatePhaseHint();
+}
+
+function triggerStartledEscape(originX, originY) {
+  if (!currentButterfly || !butterflyState.alive || butterflyState.nearMissCooldown > 0) return;
+  const { motion } = currentButterfly;
+  const fleeHeading = Math.atan2(butterflyState.y - originY, butterflyState.x - originX) + rand(-0.32, 0.32);
+  butterflyState.targetHeading = fleeHeading;
+  butterflyState.targetSpeed = motion.baseSpeed * rand(1.45, 1.9);
+  butterflyState.startledRemaining = rand(0.34, 0.58);
+  butterflyState.nearMissCooldown = 0.42;
+  butterflyState.hoverRemaining = 0;
+  setMotionState('startled_escape');
+}
+
+function showResultCard({
+  badge,
+  title,
+  meta,
+  flavor,
+  actionLabel,
+  failure = false,
+  perfect = false,
+}) {
+  resultBadge.textContent = badge;
+  resultTitle.textContent = title;
+  resultMeta.textContent = meta;
+  resultFlavor.textContent = flavor;
+  continueBtn.textContent = actionLabel;
+  resultCard.classList.toggle('is-failure', failure);
+  resultCard.classList.toggle('is-perfect', perfect);
+  resultCard.classList.remove('hidden');
+}
+
+function enterFailurePhase(kind, copy) {
+  encounter.phase = kind;
+  encounter.pointerActive = false;
+  encounter.pointerId = null;
+  butterflyState.alive = false;
+  butterfly.classList.add('hidden');
+  showResultCard(copy);
+  updatePhaseHint();
+  updateSpecimenCard();
+}
+
+function resolveEscape(reason) {
+  encounter.currentSignalLabel = '中断';
+  setStatus('目标警觉拉满，已从视野中逃逸');
+  emitParticles(butterflyState.x, butterflyState.y, currentButterfly.palette.wingD, 16, {
+    speedMin: 34,
+    speedMax: 120,
+    lifeMin: 0.22,
+    lifeMax: 0.64,
+    sizeMin: 1.3,
+    sizeMax: 3,
+  });
+  enterFailurePhase(PHASES.ESCAPE, {
+    badge: '目标逃逸',
+    title: `${currentButterfly.name} 受惊逃走`,
+    meta: `${reason} · 警觉 ${encounter.alertLevel}/${currentButterfly.alertMax}`,
+    flavor: '你已经接近成功，但这次出手还是让它彻底警觉了。下一轮可以更稳地锁定，再晚半拍或早半拍都别急。',
+    actionLabel: '重开测试轮',
+    failure: true,
+  });
+}
+
+function resolveOutOfNets() {
+  encounter.currentSignalLabel = '耗尽';
+  setStatus('测试网耗尽，本轮结束');
+  enterFailurePhase(PHASES.OUT_OF_NETS, {
+    badge: '测试网耗尽',
+    title: '网子已经全部用完',
+    meta: `${currentButterfly.name} 仍在场内游走，但这轮无法继续出手`,
+    flavor: 'V1 先按固定测试次数处理。后续可以在这里接入分享、邀请或修复类补网逻辑。',
+    actionLabel: '重开测试轮',
+    failure: true,
+  });
+}
+
+function buildSuccessFlavor(verdict) {
+  if (verdict === 'Perfect') {
+    return `最佳时机合拢，${currentButterfly.flavor}`;
+  }
+  return `准星与时机终于对上了，${currentButterfly.flavor}`;
+}
+
+function handleCaptureSuccess(trigger, verdict = 'Good') {
+  if (!currentButterfly) return;
+  encounter.phase = PHASES.SUCCESS;
+  encounter.currentSignalLabel = '完成';
+  encounter.pointerActive = false;
+  encounter.pointerId = null;
+  butterflyState.alive = false;
+  butterflyState.staggerRemaining = 0.3;
+  butterflyState.startledRemaining = 0;
+  setMotionState('captured_stagger');
+  butterflyFigure.classList.add('capture-hit');
+  setStatus(trigger === 'shake' ? '实验甩动捕获成功' : '捕捉完成，正在揭晓');
+  showToast(verdict === 'Perfect' ? `${currentButterfly.name} 被完美捕获` : `${currentButterfly.name} 已被捕捉`);
+  if (navigator.vibrate) navigator.vibrate([40, 28, 72]);
+  emitParticles(butterflyState.x, butterflyState.y, currentButterfly.palette.wingB, 22, {
+    speedMin: 30,
+    speedMax: 130,
+    lifeMin: 0.25,
+    lifeMax: 0.8,
+    sizeMin: 1.2,
+    sizeMax: 3.6,
+  });
+
+  clearTimeout(revealResultTimer);
+  revealResultTimer = setTimeout(() => {
+    butterflyFigure.classList.remove('capture-hit');
+    butterfly.classList.add('hidden');
+    showResultCard({
+      badge: rarityLabel(currentButterfly.rarity, verdict),
+      title: `你抓到了${currentButterfly.name}`,
+      meta: `${currentButterfly.role} · ${currentButterfly.rarity} · ${verdict}`,
+      flavor: buildSuccessFlavor(verdict),
+      actionLabel: '继续探索',
+      perfect: verdict === 'Perfect',
+    });
+    updatePhaseHint();
+    updateSpecimenCard();
+  }, 340);
+}
+
+function applyFailedThrow(judgement, alertDelta) {
+  encounter.lastJudgement = judgement;
+  encounter.alertLevel = clamp(encounter.alertLevel + alertDelta, 0, currentButterfly.alertMax);
+
+  if (encounter.netsRemaining <= 0) {
+    resolveOutOfNets();
+    return;
+  }
+
+  if (encounter.alertLevel >= currentButterfly.alertMax) {
+    resolveEscape(judgement === 'Graze' ? '擦网过近' : '出手失误');
+    return;
+  }
+
+  encounter.phase = PHASES.TRACK;
+  encounter.currentSignalLabel = '追踪';
+  encounter.trackProgress = judgement === 'Graze' ? 0.18 : 0.08;
+  triggerStartledEscape(encounter.reticleX, encounter.reticleY);
+  setStatus(judgement === 'Graze'
+    ? '擦网了，目标警觉上升，重新压圈'
+    : '时机没卡住，目标开始变向，重新压圈');
+  showToast(judgement === 'Graze' ? '擦网未收住，警觉 +1' : 'Miss，警觉 +2', 1600);
+  emitParticles(encounter.reticleX, encounter.reticleY, currentButterfly.palette.wingC, 8, {
+    speedMin: 20,
+    speedMax: 64,
+    lifeMin: 0.2,
+    lifeMax: 0.45,
+    sizeMin: 1,
+    sizeMax: 2.2,
+  });
+  updatePhaseHint();
+}
+
+function performThrow() {
+  if (encounter.phase !== PHASES.THROW || !currentButterfly) return;
+
+  encounter.netsRemaining = Math.max(0, encounter.netsRemaining - 1);
+  const halfWindow = encounter.throwWindowSize * 0.5;
+  const halfPerfect = encounter.perfectWindowSize * 0.5;
+  const delta = Math.abs(encounter.throwCursor - encounter.throwZoneCenter);
+
+  if (delta <= halfPerfect) {
+    handleCaptureSuccess('throw', 'Perfect');
+    return;
+  }
+
+  if (delta <= halfWindow) {
+    handleCaptureSuccess('throw', 'Good');
+    return;
+  }
+
+  if (delta <= halfWindow + GRAZE_MARGIN) {
+    applyFailedThrow('Graze', 1);
+    return;
+  }
+
+  applyFailedThrow('Miss', 2);
 }
 
 function angleDelta(current, target) {
@@ -353,12 +938,14 @@ function angleDelta(current, target) {
 function chooseNextFlightDecision() {
   if (!currentButterfly || !butterflyState.alive || butterflyState.startledRemaining > 0) return;
   const { motion } = currentButterfly;
-  const centerX = window.innerWidth * 0.5;
-  const centerY = window.innerHeight * 0.4;
-  const offsetX = centerX - butterflyState.x;
-  const offsetY = centerY - butterflyState.y;
-  const edgeForceX = butterflyState.x < motion.boundaryMargin ? 0.95 : butterflyState.x > window.innerWidth - motion.boundaryMargin ? -0.95 : 0;
-  const edgeForceY = butterflyState.y < 90 ? 0.8 : butterflyState.y > window.innerHeight * 0.68 ? -0.9 : 0;
+  const offsetX = encounter.reticleX - butterflyState.x;
+  const offsetY = encounter.reticleY - butterflyState.y;
+  const edgeForceX = butterflyState.x < motion.boundaryMargin
+    ? 0.95
+    : butterflyState.x > window.innerWidth - motion.boundaryMargin
+      ? -0.95
+      : 0;
+  const edgeForceY = butterflyState.y < 90 ? 0.8 : butterflyState.y > getReticleBounds().maxY + RETICLE_SIZE * 0.3 ? -0.9 : 0;
   const shouldHover = Math.random() < motion.hoverChance;
 
   if (shouldHover) {
@@ -366,27 +953,12 @@ function chooseNextFlightDecision() {
     butterflyState.targetSpeed = motion.baseSpeed * rand(0.08, 0.18);
     butterflyState.targetHeading += rand(-0.35, 0.35);
   } else {
-    const centerHeading = Math.atan2(offsetY * 0.45 + edgeForceY * 90, offsetX * 0.65 + edgeForceX * 120);
-    butterflyState.targetHeading = centerHeading + rand(-0.75, 0.75);
+    const centerHeading = Math.atan2(offsetY * 0.45 + edgeForceY * 90, offsetX * 0.55 + edgeForceX * 120);
+    butterflyState.targetHeading = centerHeading + rand(-0.82, 0.82);
     butterflyState.targetSpeed = motion.baseSpeed + rand(-motion.speedJitter, motion.speedJitter);
   }
 
   butterflyState.nextDecisionIn = rand(...motion.decisionWindow);
-}
-
-function triggerStartledEscape(originX, originY) {
-  if (!currentButterfly || !butterflyState.alive || butterflyState.nearMissCooldown > 0) return;
-  const { motion } = currentButterfly;
-  const fleeHeading = Math.atan2(
-    butterflyState.y - originY,
-    butterflyState.x - originX,
-  ) + rand(-0.32, 0.32);
-  butterflyState.targetHeading = fleeHeading;
-  butterflyState.targetSpeed = motion.baseSpeed * rand(1.45, 1.85);
-  butterflyState.startledRemaining = rand(0.34, 0.58);
-  butterflyState.nearMissCooldown = 0.42;
-  butterflyState.hoverRemaining = 0;
-  setMotionState('startled_escape');
 }
 
 function updateRigPose(dt, vx, vy, turnDelta = 0) {
@@ -520,12 +1092,17 @@ function updateButterfly(dt) {
   }
 
   const boundaryBiasX = butterflyState.x < motion.boundaryMargin ? 1 : butterflyState.x > window.innerWidth - motion.boundaryMargin ? -1 : 0;
-  const boundaryBiasY = butterflyState.y < 82 ? 0.8 : butterflyState.y > window.innerHeight * 0.68 ? -1 : 0;
+  const boundaryBiasY = butterflyState.y < 82 ? 0.8 : butterflyState.y > getReticleBounds().maxY + RETICLE_SIZE * 0.3 ? -1 : 0;
 
   if (boundaryBiasX || boundaryBiasY) {
     butterflyState.targetHeading = Math.atan2(boundaryBiasY + rand(-0.15, 0.15), boundaryBiasX + rand(-0.15, 0.15));
     butterflyState.targetSpeed = motion.baseSpeed + motion.speedJitter * 0.4;
     butterflyState.hoverRemaining = 0;
+  }
+
+  const alertMultiplier = encounter.phase === PHASES.TRACK ? 1 + encounter.alertLevel * 0.06 : 1;
+  if (encounter.phase === PHASES.THROW) {
+    butterflyState.targetSpeed = motion.baseSpeed * 0.1;
   }
 
   const headingAdjust = angleDelta(butterflyState.heading, butterflyState.targetHeading);
@@ -536,8 +1113,8 @@ function updateButterfly(dt) {
   const bob = Math.cos(butterflyState.t * 2.5 + currentButterfly.size * 0.03) * motion.bobAmp;
   const hoverDampen = butterflyState.hoverRemaining > 0 ? 0.36 : 1;
   const startledBoost = butterflyState.startledRemaining > 0 ? 1.12 : 1;
-  const vx = Math.cos(butterflyState.heading) * butterflyState.speed * startledBoost + sway * hoverDampen;
-  const vy = Math.sin(butterflyState.heading) * butterflyState.speed * 0.72 * startledBoost + bob;
+  const vx = Math.cos(butterflyState.heading) * butterflyState.speed * startledBoost * alertMultiplier + sway * hoverDampen;
+  const vy = Math.sin(butterflyState.heading) * butterflyState.speed * 0.72 * startledBoost * alertMultiplier + bob;
 
   butterflyState.x += vx * dt;
   butterflyState.y += vy * dt;
@@ -563,106 +1140,180 @@ function updateButterfly(dt) {
   placeButterfly();
 }
 
-function drawTrail() {
-  if (swipeTrail.length < 2) return;
-  ctx.lineWidth = 5;
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = 'rgba(136, 215, 255, 0.75)';
-  ctx.beginPath();
-  ctx.moveTo(swipeTrail[0].x, swipeTrail[0].y);
-  for (let i = 1; i < swipeTrail.length; i += 1) {
-    ctx.lineTo(swipeTrail[i].x, swipeTrail[i].y);
+function updateFalseSignal(dt) {
+  const falseSignal = encounter.falseSignal;
+  if (!falseSignal || falseSignal.consumed) return false;
+
+  if (!falseSignal.active) {
+    falseSignal.delay -= dt;
+    if (falseSignal.delay <= 0) falseSignal.active = true;
+    return false;
   }
-  ctx.stroke();
-  const now = performance.now();
-  swipeTrail = swipeTrail.filter((point) => now - point.t < 160);
+
+  falseSignal.duration -= dt;
+  if (falseSignal.duration <= 0) {
+    falseSignal.active = false;
+    falseSignal.consumed = true;
+  }
+
+  return falseSignal.active;
 }
 
-function animate(now) {
-  if (!running) return;
-  if (!lastFrameAt) lastFrameAt = now;
-  const dt = Math.min(0.033, (now - lastFrameAt) / 1000);
-  lastFrameAt = now;
-
-  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-  drawTrail();
-  updateButterfly(dt);
-  requestAnimationFrame(animate);
+function classifySignal(strength) {
+  if (strength >= 0.82) return '强';
+  if (strength >= 0.48) return '中';
+  if (strength >= 0.18) return '弱';
+  return '无';
 }
 
-function segmentDistanceToPoint(ax, ay, bx, by, px, py) {
-  const abx = bx - ax;
-  const aby = by - ay;
-  const apx = px - ax;
-  const apy = py - ay;
-  const abLengthSquared = abx * abx + aby * aby;
-  if (!abLengthSquared) return Math.hypot(px - ax, py - ay);
-  const ratio = clamp((apx * abx + apy * aby) / abLengthSquared, 0, 1);
-  const nearestX = ax + abx * ratio;
-  const nearestY = ay + aby * ratio;
-  return Math.hypot(px - nearestX, py - nearestY);
-}
+function updateSearchPhase(dt) {
+  if (encounter.phase !== PHASES.SEARCH || !currentButterfly || !encounter.signalTarget) return;
 
-function handleCaptureSuccess(trigger) {
-  if (!butterflyState.alive || !currentButterfly) return;
-  butterflyState.alive = false;
-  butterflyState.staggerRemaining = 0.3;
-  butterflyState.startledRemaining = 0;
-  setMotionState('captured_stagger');
-  butterflyFigure.classList.add('capture-hit');
-  setStatus(trigger === 'shake' ? '实验甩动捕获成功' : '捕捉完成，正在揭晓');
-  showToast(`${currentButterfly.name} 已被捕捉`);
-  if (navigator.vibrate) navigator.vibrate([40, 28, 72]);
-  drawBurst(butterflyState.x, butterflyState.y, currentButterfly.palette.wingB);
+  const falseSignalActive = updateFalseSignal(dt);
+  const signalRadius = 190 / currentButterfly.signalDifficulty;
+  const falseSignalRadius = signalRadius * 0.88;
+  const trueDistance = Math.hypot(encounter.reticleX - encounter.signalTarget.x, encounter.reticleY - encounter.signalTarget.y);
+  let strength = clamp(1 - trueDistance / signalRadius, 0, 1);
 
-  setTimeout(() => {
-    butterflyFigure.classList.remove('capture-hit');
-    butterfly.classList.add('hidden');
-    resultBadge.textContent = rarityLabel(currentButterfly.rarity);
-    resultTitle.textContent = `你抓到了${currentButterfly.name}`;
-    resultMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity}`;
-    resultFlavor.textContent = currentButterfly.flavor;
-    resultCard.classList.remove('hidden');
-    specimenMeta.textContent = `已完成捕捉 · ${currentButterfly.role} · ${currentButterfly.rarity}`;
-  }, 340);
-}
+  if (falseSignalActive && encounter.falseSignal) {
+    const falseDistance = Math.hypot(encounter.reticleX - encounter.falseSignal.x, encounter.reticleY - encounter.falseSignal.y);
+    const falseStrength = clamp(1 - falseDistance / falseSignalRadius, 0, 1) * 1.08;
+    strength = Math.max(strength, falseStrength);
+  }
 
-function handleCaptureFail(reason = 'miss') {
-  if (!currentButterfly) return;
-  setStatus(reason === 'weak_shake' ? '甩动幅度不足，建议切回滑动主流程' : '没有命中，再观察一下飞行轨迹');
-  butterfly.classList.add('miss');
-  showToast(reason === 'weak_shake' ? '动作太轻，或蝴蝶不在锁定圈内' : '划得再快一点，尽量掠过飞行中心');
-  setTimeout(() => butterfly.classList.remove('miss'), 280);
-}
+  const noiseAmp = clamp((currentButterfly.signalDifficulty - 0.78) * 0.18, 0.02, 0.1);
+  encounter.signalNoise = lerp(encounter.signalNoise, rand(-noiseAmp, noiseAmp), clamp(dt * 5, 0, 1));
+  strength = clamp(strength + encounter.signalNoise, 0, 1);
+  encounter.signalStrength = lerp(encounter.signalStrength, strength, clamp(dt * 8.5, 0, 1));
+  encounter.currentSignalLabel = classifySignal(encounter.signalStrength);
 
-function drawBurst(x, y, accentColor) {
-  const particles = Array.from({ length: 18 }, () => ({
-    x,
-    y,
-    vx: rand(-3.8, 3.8),
-    vy: rand(-3.8, 3.8),
-    life: rand(18, 32),
-  }));
-
-  function frame() {
-    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    drawTrail();
-    let aliveCount = 0;
-    for (const particle of particles) {
-      if (particle.life <= 0) continue;
-      aliveCount += 1;
-      particle.life -= 1;
-      particle.x += particle.vx;
-      particle.y += particle.vy;
-      ctx.fillStyle = `rgba(${hexToRgb(accentColor)}, ${Math.max(0, particle.life / 32)})`;
-      ctx.beginPath();
-      ctx.arc(particle.x, particle.y, 2.3, 0, Math.PI * 2);
-      ctx.fill();
+  if (encounter.pointerActive && encounter.signalStrength >= 0.74) {
+    encounter.lockProgress = clamp(encounter.lockProgress + dt * (0.55 + encounter.signalStrength * 0.65), 0, 1);
+    if (encounter.signalSparkCooldown <= 0) {
+      emitParticles(encounter.reticleX, encounter.reticleY, currentButterfly.palette.wingC, 3, {
+        speedMin: 10,
+        speedMax: 36,
+        lifeMin: 0.14,
+        lifeMax: 0.28,
+        sizeMin: 0.8,
+        sizeMax: 1.6,
+      });
+      encounter.signalSparkCooldown = 0.08;
     }
-    if (aliveCount > 0) requestAnimationFrame(frame);
+  } else {
+    encounter.lockProgress = clamp(encounter.lockProgress - dt * 0.32, 0, 1);
   }
 
-  frame();
+  encounter.signalSparkCooldown -= dt;
+
+  if (encounter.lockProgress >= 1) {
+    beginMaterialize();
+  }
+}
+
+function updateMaterializePhase(dt) {
+  if (encounter.phase !== PHASES.MATERIALIZE) return;
+  encounter.materializeRemaining -= dt;
+  encounter.signalStrength = lerp(encounter.signalStrength, 1, clamp(dt * 4, 0, 1));
+  encounter.trackProgress = lerp(encounter.trackProgress, 0.2, clamp(dt * 2, 0, 1));
+  if (encounter.materializeRemaining <= 0) {
+    beginTrack();
+  }
+}
+
+function updateTrackPhase(dt) {
+  if (encounter.phase !== PHASES.TRACK || !butterflyState.alive) return;
+
+  const distance = Math.hypot(encounter.reticleX - butterflyState.x, encounter.reticleY - butterflyState.y);
+  const inside = distance <= TRACK_RADIUS;
+
+  if (inside) {
+    encounter.trackProgress = clamp(
+      encounter.trackProgress + dt / (currentButterfly.trackHoldMs / 1000),
+      0,
+      1,
+    );
+  } else {
+    encounter.trackProgress = clamp(
+      encounter.trackProgress - dt * 1.1 / (currentButterfly.trackHoldMs / 1000),
+      0,
+      1,
+    );
+  }
+
+  if (inside && distance <= TRACK_RADIUS * 0.72) {
+    encounter.signalStrength = lerp(encounter.signalStrength, 0.92, clamp(dt * 5, 0, 1));
+  } else {
+    encounter.signalStrength = lerp(encounter.signalStrength, 0.34, clamp(dt * 4, 0, 1));
+  }
+
+  if (encounter.trackProgress >= 1) {
+    beginThrowTiming();
+  }
+}
+
+function updateThrowPhase(dt) {
+  if (encounter.phase !== PHASES.THROW) return;
+  encounter.signalStrength = lerp(encounter.signalStrength, 0.84, clamp(dt * 3.5, 0, 1));
+  encounter.throwCursor += encounter.throwDirection * currentButterfly.timingCursorSpeed * dt;
+
+  if (encounter.throwCursor >= 100) {
+    encounter.throwCursor = 100;
+    encounter.throwDirection = -1;
+  } else if (encounter.throwCursor <= 0) {
+    encounter.throwCursor = 0;
+    encounter.throwDirection = 1;
+  }
+}
+
+function emitParticles(
+  x,
+  y,
+  color,
+  count,
+  {
+    speedMin = 24,
+    speedMax = 80,
+    lifeMin = 0.18,
+    lifeMax = 0.42,
+    sizeMin = 1,
+    sizeMax = 2.6,
+  } = {},
+) {
+  for (let i = 0; i < count; i += 1) {
+    const angle = rand(0, Math.PI * 2);
+    const speed = rand(speedMin, speedMax);
+    const life = rand(lifeMin, lifeMax);
+    fxParticles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life,
+      maxLife: life,
+      size: rand(sizeMin, sizeMax),
+      color,
+    });
+  }
+}
+
+function drawFx(dt) {
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  fxParticles = fxParticles.filter((particle) => particle.life > 0);
+
+  for (const particle of fxParticles) {
+    particle.life -= dt;
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    particle.vx *= 0.96;
+    particle.vy *= 0.96;
+
+    const alpha = clamp(particle.life / particle.maxLife, 0, 1);
+    ctx.fillStyle = `rgba(${hexToRgb(particle.color)}, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function hexToRgb(hex) {
@@ -679,47 +1330,38 @@ function hexToRgb(hex) {
   return `${r}, ${g}, ${b}`;
 }
 
-function onPointerMove(clientX, clientY) {
-  const now = performance.now();
-  swipeTrail.push({ x: clientX, y: clientY, t: now });
+function animate(now) {
+  if (!running) return;
+  if (!lastFrameAt) lastFrameAt = now;
+  const dt = Math.min(0.033, (now - lastFrameAt) / 1000);
+  lastFrameAt = now;
 
-  if (!lastPointer) {
-    lastPointer = { x: clientX, y: clientY, t: now };
-    return;
-  }
+  updateSearchPhase(dt);
+  updateMaterializePhase(dt);
+  updateButterfly(dt);
+  updateTrackPhase(dt);
+  updateThrowPhase(dt);
+  drawFx(dt);
+  renderReticle();
+  updateHud();
+  renderThrowPanel();
+  updateSpecimenCard();
+  requestAnimationFrame(animate);
+}
 
-  if (mode === 'swipe' && butterflyState.alive) {
-    const dt = Math.max(1, now - lastPointer.t);
-    const distance = Math.hypot(clientX - lastPointer.x, clientY - lastPointer.y);
-    const speed = distance / dt;
-    const trackDistance = segmentDistanceToPoint(
-      lastPointer.x,
-      lastPointer.y,
-      clientX,
-      clientY,
-      butterflyState.x,
-      butterflyState.y,
-    );
+function moveReticle(clientX, clientY) {
+  const next = clampReticle(clientX, clientY);
+  encounter.reticleX = next.x;
+  encounter.reticleY = next.y;
+}
 
-    if (speed > 0.62 && trackDistance <= butterflyState.captureRadius) {
-      handleCaptureSuccess('swipe');
-    } else if (
-      speed > 0.52
-      && trackDistance <= butterflyState.captureRadius * 1.85
-      && trackDistance > butterflyState.captureRadius
-    ) {
-      triggerStartledEscape(clientX, clientY);
-    }
-  }
-
-  lastPointer = { x: clientX, y: clientY, t: now };
+function isInteractiveControl(target) {
+  return Boolean(target.closest('button, .bottom-panel, .result-card, .throw-panel, .toast'));
 }
 
 async function startExperience() {
   if (running && cameraReady) {
-    respawnButterfly();
-    setStatus('重新进入观察状态');
-    showToast('新的蝴蝶已出现');
+    startNewRound();
     return;
   }
 
@@ -727,9 +1369,7 @@ async function startExperience() {
     setStatus('正在打开相机');
     await startCamera();
     running = true;
-    startBtn.textContent = '重新召唤蝴蝶';
-    respawnButterfly();
-    showToast('相机已启动，观察飞行轨迹后滑动捕捉');
+    startNewRound();
     if (!lastFrameAt) requestAnimationFrame(animate);
   } catch (error) {
     console.error(error);
@@ -739,88 +1379,116 @@ async function startExperience() {
 }
 
 async function setMode(nextMode) {
-  if (nextMode === 'shake') {
+  if (nextMode === MODES.SHAKE) {
     try {
       const granted = await ensureMotionPermission();
       if (!granted) {
+        mode = MODES.HUNT;
+        updateModeButtons();
         const message = motionPermission === 'unsupported'
-          ? '当前设备不支持甩动权限，已保留滑动主流程'
-          : '未获得动作权限，继续使用滑动主流程即可';
+          ? '当前设备不支持甩动权限，继续使用雷达主流程'
+          : '未获得动作权限，继续使用雷达主流程即可';
         showToast(message, 2200);
+        updatePhaseHint();
+        return;
       }
     } catch (error) {
       console.error(error);
       motionPermission = 'denied';
-      showToast('动作权限请求失败，继续使用滑动主流程即可', 2200);
+      mode = MODES.HUNT;
+      updateModeButtons();
+      showToast('动作权限请求失败，继续使用雷达主流程即可', 2200);
+      updatePhaseHint();
+      return;
     }
   }
 
   mode = nextMode;
-  swipeModeBtn.classList.toggle('active', mode === 'swipe');
-  shakeModeBtn.classList.toggle('active', mode === 'shake');
-  reticle.classList.toggle('hidden', mode !== 'shake');
+  updateModeButtons();
 
-  if (mode === 'swipe') {
-    setStatus(running ? '滑动主流程已启用' : '等待开始');
+  if (mode === MODES.HUNT) {
+    setStatus(running ? '雷达主流程已启用' : '等待开始');
   } else if (motionPermission === 'granted') {
     setStatus('实验甩动模式已启用');
-    showToast('将蝴蝶引入中央圆环后，再快速甩动手机');
-  } else {
-    setStatus('甩动不可用，建议继续滑动主流程');
+    showToast('搜索和压圈不变；进入追踪后可尝试甩动直收', 1900);
   }
 
+  updatePhaseHint();
   updateSpecimenCard();
+}
+
+function handlePointerDown(event) {
+  if (!running || isInteractiveControl(event.target)) return;
+  if (![PHASES.SEARCH, PHASES.MATERIALIZE, PHASES.TRACK].includes(encounter.phase)) return;
+  encounter.pointerActive = true;
+  encounter.pointerId = event.pointerId;
+  moveReticle(event.clientX, event.clientY);
+}
+
+function handlePointerMove(event) {
+  if (!encounter.pointerActive || encounter.pointerId !== event.pointerId) return;
+  moveReticle(event.clientX, event.clientY);
+}
+
+function handlePointerUp(event) {
+  if (encounter.pointerId !== event.pointerId) return;
+  encounter.pointerActive = false;
+  encounter.pointerId = null;
+}
+
+function handleShakeCapture() {
+  if (
+    mode !== MODES.SHAKE
+    || motionPermission !== 'granted'
+    || ![PHASES.TRACK, PHASES.THROW].includes(encounter.phase)
+    || !butterflyState.alive
+    || shakeCooldown
+  ) {
+    return;
+  }
+
+  shakeCooldown = true;
+  const nearReticle = Math.hypot(butterflyState.x - encounter.reticleX, butterflyState.y - encounter.reticleY) < TRACK_RADIUS;
+
+  if (nearReticle) {
+    handleCaptureSuccess('shake', 'Good');
+  } else {
+    showToast('甩动时目标不在准星内，先把它重新压回来', 1500);
+  }
+
+  setTimeout(() => {
+    shakeCooldown = false;
+  }, 900);
 }
 
 window.addEventListener('resize', resize);
 resize();
 
-window.addEventListener('touchstart', (event) => {
-  const touch = event.touches[0];
-  if (touch) lastPointer = { x: touch.clientX, y: touch.clientY, t: performance.now() };
-}, { passive: true });
-
-window.addEventListener('touchmove', (event) => {
-  const touch = event.touches[0];
-  if (touch) onPointerMove(touch.clientX, touch.clientY);
-}, { passive: true });
-
-window.addEventListener('mousemove', (event) => onPointerMove(event.clientX, event.clientY));
-window.addEventListener('touchend', () => { lastPointer = null; }, { passive: true });
-window.addEventListener('mouseup', () => { lastPointer = null; });
+app.addEventListener('pointerdown', handlePointerDown);
+app.addEventListener('pointermove', handlePointerMove);
+window.addEventListener('pointerup', handlePointerUp);
+window.addEventListener('pointercancel', handlePointerUp);
 
 window.addEventListener('devicemotion', (event) => {
-  if (mode !== 'shake' || motionPermission !== 'granted' || !butterflyState.alive || shakeCooldown) return;
   const acceleration = event.accelerationIncludingGravity || event.acceleration;
   if (!acceleration) return;
 
   const magnitude = Math.sqrt((acceleration.x || 0) ** 2 + (acceleration.y || 0) ** 2 + (acceleration.z || 0) ** 2);
   if (magnitude > 22) {
-    shakeCooldown = true;
-    const nearReticle = Math.abs(butterflyState.x - window.innerWidth * 0.5) < 84
-      && Math.abs(butterflyState.y - window.innerHeight * 0.36) < 84;
-
-    if (nearReticle) {
-      handleCaptureSuccess('shake');
-    } else {
-      handleCaptureFail('weak_shake');
-    }
-
-    setTimeout(() => {
-      shakeCooldown = false;
-    }, 900);
+    handleShakeCapture();
   }
 });
 
 startBtn.addEventListener('click', startExperience);
-swipeModeBtn.addEventListener('click', () => setMode('swipe'));
-shakeModeBtn.addEventListener('click', () => setMode('shake'));
+huntModeBtn.addEventListener('click', () => setMode(MODES.HUNT));
+shakeModeBtn.addEventListener('click', () => setMode(MODES.SHAKE));
+throwBtn.addEventListener('click', performThrow);
 continueBtn.addEventListener('click', () => {
   resultCard.classList.add('hidden');
-  respawnButterfly();
-  setStatus(mode === 'swipe' ? '新的目标已出现，观察轨迹后滑动捕捉' : '新的目标已出现，可继续测试甩动');
+  startNewRound();
 });
 
-setMode('swipe');
+setMode(MODES.HUNT);
 updateSpecimenCard();
-placeButterfly();
+updateHud();
+renderReticle();
