@@ -7,13 +7,15 @@ const computeCameraMotion = diagnosticsCore.computeCameraMotion;
 const video = document.getElementById('labCamera');
 const statusEl = document.getElementById('labStatus');
 const buildStamp = document.getElementById('labBuildStamp');
-const titleEl = document.getElementById('labTitle');
-const metaEl = document.getElementById('labMeta');
+const compactStatusEl = document.getElementById('labCompactStatus');
 const captureFrame = document.getElementById('labCaptureFrame');
 const centerZone = document.getElementById('labCenterZone');
 const targetsLayer = document.getElementById('labTargetsLayer');
+const summaryPrimaryEl = document.getElementById('labSummaryPrimary');
+const summarySecondaryEl = document.getElementById('labSummarySecondary');
+const debugToggleBtn = document.getElementById('labDebugToggle');
+const debugDetailsEl = document.getElementById('labDebugDetails');
 const debugContent = document.getElementById('labDebugContent');
-const debugHint = document.getElementById('labDebugHint');
 const pairModeBtn = document.getElementById('pairModeBtn');
 const sampleModeBtn = document.getElementById('sampleModeBtn');
 const pairPresetGroup = document.getElementById('pairPresetGroup');
@@ -25,7 +27,7 @@ const startBtn = document.getElementById('labStartBtn');
 const recenterBtn = document.getElementById('labRecenterBtn');
 
 const BUILD_INFO = {
-  label: 'observe-lab-v1',
+  label: 'observe-lab-v2',
   channel: 'main',
 };
 
@@ -47,9 +49,9 @@ const WINDOW_TUNING = {
 };
 
 const LAB_CONFIG = {
-  pairRadius: 156,
-  diagonalRadius: 116,
-  sampleRadius: 170,
+  pairRadius: 146,
+  diagonalRadius: 108,
+  sampleRadius: 152,
   centerZoneSize: 48,
   distanceTieThreshold: 12,
 };
@@ -101,6 +103,7 @@ function createLabState() {
     targetDistance: 0,
     winnerDistance: 0,
     hint: '等待开始',
+    debugExpanded: false,
   };
 }
 
@@ -377,6 +380,13 @@ function formatNumber(value, digits = 1) {
   return Number.isFinite(value) ? value.toFixed(digits) : '--';
 }
 
+function compactModeLabel() {
+  if (labState.mode !== 'pair') return '采样模式';
+  if (labState.pairPreset === 'vertical') return '对称模式 · 垂直';
+  if (labState.pairPreset === 'diagonal') return '对称模式 · 斜向';
+  return '对称模式 · 水平';
+}
+
 function targetDisplayLabel(id) {
   if (!id) return '--';
   return labState.mode === 'pair' ? PAIR_LABELS[id] : `#${id}`;
@@ -449,17 +459,13 @@ function getHint() {
 }
 
 function renderLabSummary() {
-  const modeLabel = labState.mode === 'pair' ? '对称模式' : '采样模式';
-  const pairLabel = labState.mode === 'pair'
-    ? ` · ${labState.pairPreset === 'horizontal' ? '水平' : labState.pairPreset === 'vertical' ? '垂直' : '斜向'}`
-    : '';
-  titleEl.textContent = `${modeLabel}${pairLabel}`;
-  metaEl.textContent = labState.mode === 'pair'
-    ? `当前追 ${targetDisplayLabel(labState.selectedTarget)}。如果你追它，却是另一色更先到中心，就说明后摄观察语义还有错。`
-    : `当前追 ${targetDisplayLabel(labState.selectedTarget)}。看最终更接近中心的是不是它，以检查整个空间里的追近场有没有扭。`;
-
   labState.hint = getHint();
-  debugHint.textContent = labState.hint;
+  compactStatusEl.textContent = `${compactModeLabel()} · 当前追 ${targetDisplayLabel(labState.selectedTarget)}`;
+
+  const winnerLabel = targetDisplayLabel(labState.closestTargetId);
+  const enteredLabel = targetDisplayLabel(labState.enteredTargetId);
+  summaryPrimaryEl.textContent = `当前目标：${targetDisplayLabel(labState.selectedTarget)} · 当前更接近中心：${winnerLabel}`;
+  summarySecondaryEl.textContent = `判读：${labState.hint} · 中心区：${enteredLabel}`;
 
   const lines = [
     `cam      ${cameraState.facingMode}`,
@@ -484,6 +490,9 @@ function renderLabSummary() {
   }
 
   debugContent.textContent = lines.join('\n');
+  debugToggleBtn.setAttribute('aria-expanded', String(labState.debugExpanded));
+  debugToggleBtn.textContent = labState.debugExpanded ? '收起诊断详情' : '展开诊断详情';
+  debugDetailsEl.classList.toggle('hidden', !labState.debugExpanded);
 }
 
 function setMode(nextMode) {
@@ -528,7 +537,8 @@ async function startExperiment() {
     renderLabSummary();
   } catch (error) {
     setStatus('无法启动后摄');
-    debugHint.textContent = error instanceof Error ? error.message : '启动失败';
+    debugContent.textContent = error instanceof Error ? error.message : '启动失败';
+    renderLabSummary();
   }
 }
 
@@ -560,6 +570,10 @@ function bindEvents() {
   presetHorizontalBtn.addEventListener('click', () => setPairPreset('horizontal'));
   presetVerticalBtn.addEventListener('click', () => setPairPreset('vertical'));
   presetDiagonalBtn.addEventListener('click', () => setPairPreset('diagonal'));
+  debugToggleBtn.addEventListener('click', () => {
+    labState.debugExpanded = !labState.debugExpanded;
+    renderLabSummary();
+  });
 }
 
 function init() {

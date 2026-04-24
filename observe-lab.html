@@ -15,7 +15,7 @@
     <div class="topbar">
       <div class="brand-group">
         <div class="brand">observe lab</div>
-        <div class="brand-subtitle">后摄观察窗双模式诊断页</div>
+        <div class="brand-subtitle">后摄诊断页</div>
       </div>
       <div class="status-group">
         <div id="labStatus" class="status">等待开始</div>
@@ -23,11 +23,7 @@
       </div>
     </div>
 
-    <div class="flight-card lab-brief">
-      <div class="eyebrow">实验目标</div>
-      <div id="labTitle" class="specimen-name">对称模式 · 水平</div>
-      <div id="labMeta" class="specimen-meta">先确认后摄追近语义，再看整个空间里到底是谁被逼近到了中心。</div>
-    </div>
+    <div id="labCompactStatus" class="lab-compact-status">对称模式 · 当前追蓝色</div>
 
     <div id="labCaptureCluster" class="capture-cluster lab-capture-cluster" aria-hidden="true">
       <div id="labCaptureFrame" class="capture-frame is-active">
@@ -37,12 +33,6 @@
     </div>
 
     <div id="labTargetsLayer" class="lab-targets-layer" aria-hidden="true"></div>
-
-    <div id="labDebug" class="observe-debug lab-debug-card" aria-live="polite">
-      <div class="observe-debug-title">observe lab</div>
-      <pre id="labDebugContent" class="observe-debug-content"></pre>
-      <div id="labDebugHint" class="observe-debug-hint">等待开始</div>
-    </div>
 
     <div class="bottom-panel lab-panel">
       <div class="bottom-panel-expanded">
@@ -74,9 +64,23 @@
           <button id="labRecenterBtn" class="secondary-btn" type="button">重标定观察窗</button>
         </div>
 
+        <div id="labSummaryBar" class="lab-summary-bar" aria-live="polite">
+          <div id="labSummaryPrimary" class="lab-summary-primary">当前目标：蓝色 · 当前更接近中心：--</div>
+          <div id="labSummarySecondary" class="lab-summary-secondary">判读：后摄未就绪</div>
+        </div>
+
+        <button id="labDebugToggle" class="lab-debug-toggle" type="button" aria-expanded="false">
+          展开诊断详情
+        </button>
+
+        <div id="labDebugDetails" class="lab-debug-details hidden">
+          <div class="observe-debug-title">observe lab</div>
+          <pre id="labDebugContent" class="observe-debug-content"></pre>
+        </div>
+
         <div class="hint">
           <div>1. 这页不做飞行、惊走、timing，只测后摄“逼近谁”的语义。</div>
-          <div>2. 对着你想追的颜色或编号去移动后摄，看最后是谁更靠近中心区。</div>
+          <div>2. 对着你想追的颜色或编号去移动后摄，看谁更先靠近中心区。</div>
         </div>
       </div>
     </div>
