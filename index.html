@@ -59,7 +59,21 @@
       </div>
     </div>
 
-    <div id="reticle" class="hidden"></div>
+    <div id="captureFrame" class="capture-frame hidden" aria-hidden="true">
+      <div class="capture-frame-core"></div>
+    </div>
+
+    <div id="timingHud" class="timing-hud hidden" aria-hidden="true">
+      <div class="timing-head">
+        <div class="timing-title">捕获时机</div>
+        <div id="timingMeta" class="timing-meta">主玩法：入框后看准窗口甩动</div>
+      </div>
+      <div id="timingBar" class="timing-bar">
+        <div id="timingWindow" class="timing-window"></div>
+        <div id="timingCursor" class="timing-cursor"></div>
+      </div>
+    </div>
+
     <div id="toast" class="toast hidden"></div>
 
     <div id="resultCard" class="result-card hidden">
@@ -75,13 +89,13 @@
     <div class="bottom-panel">
       <button id="startBtn" class="primary-btn">开始体验</button>
       <div class="modes">
-        <button id="swipeModeBtn" class="mode-btn active">滑动捕捉</button>
-        <button id="shakeModeBtn" class="mode-btn">实验模式：甩动</button>
+        <button id="swipeModeBtn" class="mode-btn active">备用：滑动</button>
+        <button id="shakeModeBtn" class="mode-btn">主玩法：甩动</button>
       </div>
       <div class="hint">
-        <div>1. 点击“开始体验”后允许相机权限，默认用滑动完成捕捉。</div>
-        <div>2. 快速划过蝴蝶飞行路径，速度足够时可完成抓取。</div>
-        <div>3. 甩动模式是次级实验项；若动作权限被拒绝，滑动主流程仍可正常演示。</div>
+        <div>1. 点击“开始体验”后允许相机权限，再点击“主玩法：甩动”申请动作权限。</div>
+        <div>2. 将蝴蝶引入中央画框，等待指针 X 落入高亮窗口 MN。</div>
+        <div>3. 在窗口内快速甩动即可命中；滑动仍保留为备用兜底。</div>
       </div>
     </div>
   </div>

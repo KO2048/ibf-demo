@@ -12,7 +12,12 @@ const specimenMeta = document.getElementById('specimenMeta');
 const startBtn = document.getElementById('startBtn');
 const swipeModeBtn = document.getElementById('swipeModeBtn');
 const shakeModeBtn = document.getElementById('shakeModeBtn');
-const reticle = document.getElementById('reticle');
+const captureFrame = document.getElementById('captureFrame');
+const timingHud = document.getElementById('timingHud');
+const timingBar = document.getElementById('timingBar');
+const timingWindow = document.getElementById('timingWindow');
+const timingCursor = document.getElementById('timingCursor');
+const timingMeta = document.getElementById('timingMeta');
 const toast = document.getElementById('toast');
 const resultCard = document.getElementById('resultCard');
 const resultBadge = document.getElementById('resultBadge');
@@ -42,6 +47,8 @@ const MOTION_STATES = {
   CAPTURED_STAGGER: 'captured_stagger',
 };
 
+const TIMING_CURSOR_SPEED = 68;
+
 function createSliceBoxes(frontX, frontY, frontW, frontH, backX, backY, backW, backH, bodyX, bodyY, bodyW, bodyH) {
   return {
     leftWingFront: { x: frontX, y: frontY, w: frontW, h: frontH },
@@ -62,6 +69,8 @@ const butterflyCatalog = [
     weight: 0.45,
     size: 118,
     captureRadius: 58,
+    timingWindowSize: 24,
+    timingZoneCenterRange: [44, 56],
     rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_54 PM (1) Background Removed.png',
     sliceBoxes: createSliceBoxes(5, 3, 42, 42, 13, 40, 29, 30, 39, 9, 22, 70),
@@ -100,6 +109,8 @@ const butterflyCatalog = [
     weight: 0.35,
     size: 104,
     captureRadius: 52,
+    timingWindowSize: 17,
+    timingZoneCenterRange: [46, 54],
     rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_55 PM (3) Background Removed.png',
     sliceBoxes: createSliceBoxes(8, 4, 39, 39, 16, 40, 27, 28, 40, 11, 20, 68),
@@ -138,6 +149,8 @@ const butterflyCatalog = [
     weight: 0.2,
     size: 134,
     captureRadius: 66,
+    timingWindowSize: 11,
+    timingZoneCenterRange: [47, 53],
     rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_55 PM (2) Background Removed.png',
     sliceBoxes: createSliceBoxes(5, 2, 43, 44, 15, 39, 28, 30, 40, 8, 20, 72),
@@ -181,6 +194,7 @@ let lastFrameAt = 0;
 let currentButterfly = null;
 let revealTimer = null;
 let butterflyState = createEmptyButterflyState();
+let timingState = createTimingState();
 
 function createEmptyButterflyState() {
   return {
@@ -213,6 +227,18 @@ function createEmptyButterflyState() {
     lastVy: 0,
     capturePending: false,
     resolvingCapture: false,
+  };
+}
+
+function createTimingState() {
+  return {
+    cursorPosition: 16,
+    cursorDirection: 1,
+    cursorSpeed: TIMING_CURSOR_SPEED,
+    zoneCenter: 50,
+    zoneStart: 38,
+    zoneEnd: 62,
+    windowSize: 24,
   };
 }
 
@@ -315,9 +341,85 @@ function updateSpecimenCard() {
   const stateCopy = butterflyState.capturePending
     ? '已命中，正在揭晓'
     : mode === 'swipe'
-      ? '滑动主流程已就绪'
-      : '实验甩动模式已启用';
+      ? '滑动备用已启用'
+      : '入框 + timing + 甩动';
   specimenMeta.textContent = `${currentButterfly.role} · ${currentButterfly.rarity} · ${stateCopy}`;
+}
+
+function configureTimingForVariant(variant) {
+  const centerRange = variant.timingZoneCenterRange || [46, 54];
+  const zoneCenter = rand(centerRange[0], centerRange[1]);
+  const windowSize = variant.timingWindowSize || 22;
+  timingState = {
+    cursorPosition: rand(10, 90),
+    cursorDirection: Math.random() > 0.5 ? 1 : -1,
+    cursorSpeed: TIMING_CURSOR_SPEED,
+    zoneCenter,
+    zoneStart: clamp(zoneCenter - windowSize * 0.5, 6, 94 - windowSize),
+    zoneEnd: clamp(zoneCenter + windowSize * 0.5, windowSize + 6, 94),
+    windowSize,
+  };
+  timingState.zoneCenter = (timingState.zoneStart + timingState.zoneEnd) * 0.5;
+}
+
+function getTimingMetaCopy() {
+  if (!running || !currentButterfly) return '等待开始';
+  if (mode !== 'shake') return '滑动仍可作为备用路径';
+  const inside = isButterflyInsideCaptureFrame();
+  const timingReady = isTimingHit();
+  if (inside && timingReady) return '窗口已对齐，立即甩动';
+  if (inside) return '目标已入框，等待 X 落入 MN';
+  return '先把蝴蝶引入中央画框';
+}
+
+function renderTimingUi() {
+  captureFrame.classList.toggle('hidden', !running);
+  timingHud.classList.toggle('hidden', !running);
+  timingWindow.style.left = `${timingState.zoneStart}%`;
+  timingWindow.style.width = `${timingState.zoneEnd - timingState.zoneStart}%`;
+  timingCursor.style.left = `${timingState.cursorPosition}%`;
+  timingMeta.textContent = getTimingMetaCopy();
+  captureFrame.classList.toggle('is-ready', mode === 'shake' && isButterflyInsideCaptureFrame() && isTimingHit());
+  captureFrame.classList.toggle('is-active', running && mode === 'shake');
+  timingHud.classList.toggle('is-shake-active', running && mode === 'shake');
+  if (!running || !currentButterfly) {
+    timingMeta.textContent = mode === 'swipe' ? '滑动备用已启用' : '等待蝴蝶进入当前轮次';
+  }
+}
+
+function updateTiming(dt) {
+  if (!running || !currentButterfly) return;
+  timingState.cursorPosition += timingState.cursorDirection * timingState.cursorSpeed * dt;
+  if (timingState.cursorPosition >= 100) {
+    timingState.cursorPosition = 100;
+    timingState.cursorDirection = -1;
+  } else if (timingState.cursorPosition <= 0) {
+    timingState.cursorPosition = 0;
+    timingState.cursorDirection = 1;
+  }
+}
+
+function getCaptureFrameMetrics() {
+  const rect = captureFrame.getBoundingClientRect();
+  return {
+    centerX: rect.left + rect.width * 0.5,
+    centerY: rect.top + rect.height * 0.5,
+    halfW: rect.width * 0.5,
+    halfH: rect.height * 0.5,
+  };
+}
+
+function isButterflyInsideCaptureFrame() {
+  if (!running || !currentButterfly || !butterflyState.alive) return false;
+  const frame = getCaptureFrameMetrics();
+  const marginX = Math.min(14, butterflyState.captureRadius * 0.22);
+  const marginY = Math.min(12, butterflyState.captureRadius * 0.22);
+  return Math.abs(butterflyState.x - frame.centerX) <= frame.halfW - marginX
+    && Math.abs(butterflyState.y - frame.centerY) <= frame.halfH - marginY;
+}
+
+function isTimingHit() {
+  return timingState.cursorPosition >= timingState.zoneStart && timingState.cursorPosition <= timingState.zoneEnd;
 }
 
 function configureSlicedPart(partEl, imageEl, box, source) {
@@ -402,6 +504,7 @@ function spawnButterfly() {
   clearRevealTimer();
   const variant = pickButterflyVariant();
   applyButterflyVariant(variant);
+  configureTimingForVariant(variant);
   const centerBias = rand(0.32, 0.68);
   butterflyState = {
     x: window.innerWidth * centerBias,
@@ -438,10 +541,15 @@ function spawnButterfly() {
   butterfly.classList.remove('hidden', 'capture-hit', 'miss');
   butterflyFigure.classList.remove('capture-hit');
   resultCard.classList.add('hidden');
-  setStatus(mode === 'swipe' ? '观察飞行轨迹后滑动捕捉' : '蝴蝶已出现，可切回滑动或测试甩动');
+  setStatus(
+    mode === 'swipe'
+      ? '观察飞行轨迹后可用滑动备用捕捉'
+      : '蝴蝶已出现，将其引入中央画框并等待 timing',
+  );
   updateSpecimenCard();
   placeButterfly();
   updateRigPose(0, 0, 0, 0);
+  renderTimingUi();
 }
 
 function respawnButterfly() {
@@ -735,7 +843,9 @@ function animate(now) {
 
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawTrail();
+  updateTiming(dt);
   updateButterfly(dt);
+  renderTimingUi();
   requestAnimationFrame(animate);
 }
 
@@ -776,7 +886,7 @@ function handleCaptureSuccess(trigger) {
   butterflyState.hoverRemaining = 0;
   butterflyState.escapeBoost = 0;
   setMotionState(MOTION_STATES.CAPTURED_STAGGER);
-  setStatus(trigger === 'shake' ? '实验甩动捕获成功' : '命中成功，蝴蝶正在失稳');
+  setStatus(trigger === 'shake' ? 'timing 命中成功，蝴蝶正在失稳' : '命中成功，蝴蝶正在失稳');
   showToast(`${currentButterfly.name} 已被命中`);
   if (navigator.vibrate) navigator.vibrate([24, 18, 46]);
   updateSpecimenCard();
@@ -784,13 +894,30 @@ function handleCaptureSuccess(trigger) {
 
 function handleCaptureFail(reason = 'miss') {
   if (!currentButterfly) return;
-  setStatus(reason === 'weak_shake' ? '甩动幅度不足，建议切回滑动主流程' : '没有命中，再观察一下飞行轨迹');
+  setStatus(
+    reason === 'timing_miss'
+      ? '时机不对，等 X 落入 MN 再甩动'
+      : reason === 'frame_miss'
+        ? '蝴蝶不在中央画框中'
+        : reason === 'weak_shake'
+          ? '甩动幅度不足，建议切回滑动主流程'
+          : '没有命中，再观察一下飞行轨迹',
+  );
   butterfly.classList.add('miss');
-  showToast(reason === 'weak_shake' ? '动作太轻，或蝴蝶不在锁定圈内' : '划得再快一点，尽量掠过飞行中心');
+  showToast(
+    reason === 'timing_miss'
+      ? '当前 X 不在高亮窗口 MN 内'
+      : reason === 'frame_miss'
+        ? '先把蝴蝶引入中央画框'
+        : reason === 'weak_shake'
+          ? '动作太轻，或蝴蝶不在捕获框内'
+          : '划得再快一点，尽量掠过飞行中心',
+  );
   setTimeout(() => butterfly.classList.remove('miss'), 280);
 
-  if (reason === 'weak_shake' && butterflyState.alive && !butterflyState.capturePending) {
-    triggerStartledEscape(window.innerWidth * 0.5, window.innerHeight * 0.36);
+  if (butterflyState.alive && !butterflyState.capturePending && reason !== 'miss') {
+    const frame = getCaptureFrameMetrics();
+    triggerStartledEscape(frame.centerX, frame.centerY);
   }
 }
 
@@ -885,7 +1012,7 @@ async function startExperience() {
     running = true;
     startBtn.textContent = '重新召唤蝴蝶';
     respawnButterfly();
-    showToast('相机已启动，观察飞行轨迹后滑动捕捉');
+    showToast('相机已启动。主玩法是入框 + timing + 甩动，滑动仍可作为备用');
     if (!lastFrameAt) requestAnimationFrame(animate);
   } catch (error) {
     console.error(error);
@@ -902,30 +1029,44 @@ async function setMode(nextMode) {
         const message = motionPermission === 'unsupported'
           ? '当前设备不支持甩动权限，已保留滑动主流程'
           : '未获得动作权限，继续使用滑动主流程即可';
+        mode = 'swipe';
+        swipeModeBtn.classList.add('active');
+        shakeModeBtn.classList.remove('active');
         showToast(message, 2200);
+        setStatus(running ? '滑动备用已启用' : '等待开始');
+        updateSpecimenCard();
+        renderTimingUi();
+        return;
       }
     } catch (error) {
       console.error(error);
       motionPermission = 'denied';
+      mode = 'swipe';
+      swipeModeBtn.classList.add('active');
+      shakeModeBtn.classList.remove('active');
       showToast('动作权限请求失败，继续使用滑动主流程即可', 2200);
+      setStatus(running ? '滑动备用已启用' : '等待开始');
+      updateSpecimenCard();
+      renderTimingUi();
+      return;
     }
   }
 
   mode = nextMode;
   swipeModeBtn.classList.toggle('active', mode === 'swipe');
   shakeModeBtn.classList.toggle('active', mode === 'shake');
-  reticle.classList.toggle('hidden', mode !== 'shake');
 
   if (mode === 'swipe') {
-    setStatus(running ? '滑动主流程已启用' : '等待开始');
+    setStatus(running ? '滑动备用已启用' : '等待开始');
   } else if (motionPermission === 'granted') {
-    setStatus('实验甩动模式已启用');
-    showToast('将蝴蝶引入中央圆环后，再快速甩动手机');
+    setStatus('主玩法已启用：入框后看准 timing 甩动');
+    showToast('将蝴蝶引入中央画框，等 X 落入 MN 时再甩动');
   } else {
     setStatus('甩动不可用，建议继续滑动主流程');
   }
 
   updateSpecimenCard();
+  renderTimingUi();
 }
 
 window.addEventListener('resize', resize);
@@ -953,13 +1094,15 @@ window.addEventListener('devicemotion', (event) => {
   const magnitude = Math.sqrt((acceleration.x || 0) ** 2 + (acceleration.y || 0) ** 2 + (acceleration.z || 0) ** 2);
   if (magnitude > 22) {
     shakeCooldown = true;
-    const nearReticle = Math.abs(butterflyState.x - window.innerWidth * 0.5) < 84
-      && Math.abs(butterflyState.y - window.innerHeight * 0.36) < 84;
+    const insideFrame = isButterflyInsideCaptureFrame();
+    const timingReady = isTimingHit();
 
-    if (nearReticle) {
+    if (insideFrame && timingReady) {
       handleCaptureSuccess('shake');
+    } else if (!insideFrame) {
+      handleCaptureFail('frame_miss');
     } else {
-      handleCaptureFail('weak_shake');
+      handleCaptureFail('timing_miss');
     }
 
     setTimeout(() => {
@@ -974,9 +1117,10 @@ shakeModeBtn.addEventListener('click', () => setMode('shake'));
 continueBtn.addEventListener('click', () => {
   resultCard.classList.add('hidden');
   respawnButterfly();
-  setStatus(mode === 'swipe' ? '新的目标已出现，观察轨迹后滑动捕捉' : '新的目标已出现，可继续测试甩动');
+  setStatus(mode === 'swipe' ? '新的目标已出现，滑动可用作备用' : '新的目标已出现，将其引入画框再看准 timing');
 });
 
 setMode('swipe');
 updateSpecimenCard();
 placeButterfly();
+renderTimingUi();
