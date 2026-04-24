@@ -397,22 +397,24 @@ body {
 }
 
 .capture-cluster {
+  --frame-size: 156px;
+  --frame-size-compact: 142px;
   position: absolute;
   left: 50%;
-  top: 34.5%;
+  top: 33.5%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
 .capture-frame {
   position: relative;
-  width: 132px;
-  height: 132px;
-  border-radius: 26px;
+  width: var(--frame-size);
+  height: var(--frame-size);
+  border-radius: 30px;
   border: 1.5px solid rgba(255, 255, 255, 0.22);
   box-shadow:
     0 0 0 8px rgba(255, 255, 255, 0.04),
@@ -426,49 +428,49 @@ body {
 .capture-frame-core::after {
   content: "";
   position: absolute;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border-color: rgba(136, 215, 255, 0.88);
 }
 
 .capture-frame::before {
-  left: 8px;
-  top: 8px;
-  border-left: 3px solid;
-  border-top: 3px solid;
-  border-top-left-radius: 14px;
+  left: 10px;
+  top: 10px;
+  border-left: 4px solid;
+  border-top: 4px solid;
+  border-top-left-radius: 16px;
 }
 
 .capture-frame::after {
-  right: 8px;
-  top: 8px;
-  border-right: 3px solid;
-  border-top: 3px solid;
-  border-top-right-radius: 14px;
+  right: 10px;
+  top: 10px;
+  border-right: 4px solid;
+  border-top: 4px solid;
+  border-top-right-radius: 16px;
 }
 
 .capture-frame-core::before {
-  left: 8px;
-  bottom: 8px;
-  border-left: 3px solid;
-  border-bottom: 3px solid;
-  border-bottom-left-radius: 14px;
+  left: 10px;
+  bottom: 10px;
+  border-left: 4px solid;
+  border-bottom: 4px solid;
+  border-bottom-left-radius: 16px;
 }
 
 .capture-frame-core::after {
-  right: 8px;
-  bottom: 8px;
-  border-right: 3px solid;
-  border-bottom: 3px solid;
-  border-bottom-right-radius: 14px;
+  right: 10px;
+  bottom: 10px;
+  border-right: 4px solid;
+  border-bottom: 4px solid;
+  border-bottom-right-radius: 16px;
 }
 
 .capture-frame-core {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at center, rgba(136, 215, 255, 0.08), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+    radial-gradient(circle at center, rgba(136, 215, 255, 0.05), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.012));
 }
 
 .capture-frame.is-active {
@@ -496,36 +498,37 @@ body {
 
 .timing-hud {
   position: relative;
-  width: 122px;
-  border-radius: 16px;
-  padding: 8px 8px 10px;
-  background: rgba(7, 11, 17, 0.7);
-  border: 1px solid var(--line);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.2);
+  width: 132px;
+  border-radius: 15px;
+  padding: 5px 6px 8px;
+  background: rgba(7, 11, 17, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.08);
 }
 
 .timing-hud.is-shake-active {
-  border-color: rgba(136, 215, 255, 0.22);
+  border-color: rgba(136, 215, 255, 0.26);
 }
 
 .timing-meta {
-  min-height: 15px;
+  min-height: 14px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--muted);
+  color: rgba(246, 244, 239, 0.92);
   text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 .timing-bar {
   position: relative;
-  margin-top: 6px;
+  margin-top: 4px;
   height: 12px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.12);
   overflow: visible;
 }
 
@@ -534,9 +537,9 @@ body {
   top: 0;
   bottom: 0;
   border-radius: 999px;
-  border: 1px solid rgba(255, 110, 76, 0.72);
-  background: rgba(255, 110, 76, 0.28);
-  box-shadow: 0 0 18px rgba(255, 110, 76, 0.16);
+  border: 1px solid rgba(255, 125, 93, 0.82);
+  background: rgba(255, 125, 93, 0.34);
+  box-shadow: 0 0 14px rgba(255, 125, 93, 0.14);
 }
 
 .timing-cursor {
@@ -548,12 +551,13 @@ body {
   border-right: 8px solid transparent;
   border-bottom: 12px solid rgba(79, 178, 255, 0.94);
   transform: translateX(-50%);
-  filter: drop-shadow(0 4px 10px rgba(79, 178, 255, 0.28));
+  filter: drop-shadow(0 3px 8px rgba(79, 178, 255, 0.24));
 }
 
 .timing-hud.is-ready {
-  border-color: rgba(154, 244, 197, 0.5);
-  box-shadow: 0 10px 24px rgba(154, 244, 197, 0.16);
+  border-color: rgba(154, 244, 197, 0.58);
+  background: rgba(19, 41, 33, 0.18);
+  box-shadow: 0 8px 18px rgba(154, 244, 197, 0.14);
 }
 
 .timing-hud.is-ready .timing-meta {
@@ -561,8 +565,9 @@ body {
 }
 
 .timing-hud.is-miss {
-  border-color: rgba(255, 110, 76, 0.6);
-  box-shadow: 0 10px 24px rgba(255, 110, 76, 0.14);
+  border-color: rgba(255, 110, 76, 0.68);
+  background: rgba(56, 22, 18, 0.2);
+  box-shadow: 0 8px 18px rgba(255, 110, 76, 0.12);
 }
 
 .bottom-panel {
@@ -872,17 +877,17 @@ body {
   }
 
   .capture-cluster {
-    top: 33.5%;
+    top: 32.5%;
   }
 
   .capture-frame {
-    width: 124px;
-    height: 124px;
+    width: var(--frame-size-compact);
+    height: var(--frame-size-compact);
   }
 
   .timing-hud {
-    width: 116px;
-    padding: 7px 8px 9px;
+    width: 124px;
+    padding: 5px 6px 8px;
   }
 
   .bottom-panel {

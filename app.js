@@ -54,7 +54,15 @@ const MOTION_STATES = {
   CAPTURED_STAGGER: 'captured_stagger',
 };
 
-const TIMING_CURSOR_SPEED = 68;
+const NET_TUNING = {
+  frameSize: 156,
+  frameSizeCompact: 142,
+  frameVisualOffsetY: 0,
+  frameHitMarginX: 10,
+  frameHitMarginY: 8,
+  cursorSpeed: 68,
+  shakeCooldownMs: 900,
+};
 
 function createSliceBoxes(frontX, frontY, frontW, frontH, backX, backY, backW, backH, bodyX, bodyY, bodyW, bodyH) {
   return {
@@ -76,7 +84,7 @@ const butterflyCatalog = [
     weight: 0.45,
     size: 118,
     captureRadius: 58,
-    timingWindowSize: 24,
+    timingWindowSize: 27,
     timingZoneCenterRange: [44, 56],
     rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_54 PM (1) Background Removed.png',
@@ -116,7 +124,7 @@ const butterflyCatalog = [
     weight: 0.35,
     size: 104,
     captureRadius: 52,
-    timingWindowSize: 17,
+    timingWindowSize: 20,
     timingZoneCenterRange: [46, 54],
     rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_55 PM (3) Background Removed.png',
@@ -156,7 +164,7 @@ const butterflyCatalog = [
     weight: 0.2,
     size: 134,
     captureRadius: 66,
-    timingWindowSize: 11,
+    timingWindowSize: 13,
     timingZoneCenterRange: [47, 53],
     rigMode: 'sliced',
     assetSrc: 'assets/butterflies/ChatGPT Image Apr 23, 2026, 04_38_55 PM (2) Background Removed.png',
@@ -243,7 +251,7 @@ function createTimingState() {
   return {
     cursorPosition: 16,
     cursorDirection: 1,
-    cursorSpeed: TIMING_CURSOR_SPEED,
+    cursorSpeed: NET_TUNING.cursorSpeed,
     zoneCenter: 50,
     zoneStart: 38,
     zoneEnd: 62,
@@ -362,7 +370,7 @@ function configureTimingForVariant(variant) {
   timingState = {
     cursorPosition: rand(10, 90),
     cursorDirection: Math.random() > 0.5 ? 1 : -1,
-    cursorSpeed: TIMING_CURSOR_SPEED,
+    cursorSpeed: NET_TUNING.cursorSpeed,
     zoneCenter,
     zoneStart: clamp(zoneCenter - windowSize * 0.5, 6, 94 - windowSize),
     zoneEnd: clamp(zoneCenter + windowSize * 0.5, windowSize + 6, 94),
@@ -445,7 +453,7 @@ function getCaptureFrameMetrics() {
   const rect = captureFrame.getBoundingClientRect();
   return {
     centerX: rect.left + rect.width * 0.5,
-    centerY: rect.top + rect.height * 0.5,
+    centerY: rect.top + rect.height * 0.5 + NET_TUNING.frameVisualOffsetY,
     halfW: rect.width * 0.5,
     halfH: rect.height * 0.5,
   };
@@ -454,8 +462,8 @@ function getCaptureFrameMetrics() {
 function isButterflyInsideCaptureFrame() {
   if (!running || !currentButterfly || !butterflyState.alive) return false;
   const frame = getCaptureFrameMetrics();
-  const marginX = Math.min(14, butterflyState.captureRadius * 0.22);
-  const marginY = Math.min(12, butterflyState.captureRadius * 0.22);
+  const marginX = Math.min(NET_TUNING.frameHitMarginX, butterflyState.captureRadius * 0.18);
+  const marginY = Math.min(NET_TUNING.frameHitMarginY, butterflyState.captureRadius * 0.16);
   return Math.abs(butterflyState.x - frame.centerX) <= frame.halfW - marginX
     && Math.abs(butterflyState.y - frame.centerY) <= frame.halfH - marginY;
 }
@@ -499,6 +507,8 @@ function applyButterflyVariant(variant) {
   butterfly.style.setProperty('--back-origin-right-x', `${100 - variant.rig.backPivot.x}%`);
   butterfly.style.setProperty('--back-origin-y', `${variant.rig.backPivot.y}%`);
   butterfly.style.setProperty('--body-scale-base', variant.rig.bodyScale);
+  captureCluster.style.setProperty('--frame-size', `${NET_TUNING.frameSize}px`);
+  captureCluster.style.setProperty('--frame-size-compact', `${NET_TUNING.frameSizeCompact}px`);
 
   const rigMode = variant.rigMode === 'sliced' && variant.assetSrc ? 'sliced' : 'placeholder';
   setRigMode(rigMode);
@@ -1152,7 +1162,7 @@ window.addEventListener('devicemotion', (event) => {
 
     setTimeout(() => {
       shakeCooldown = false;
-    }, 900);
+    }, NET_TUNING.shakeCooldownMs);
   }
 });
 
