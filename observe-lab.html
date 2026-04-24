@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>ifafa Observe Lab</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="observe-lab-page">
+  <div id="observeLabApp">
+    <video id="labCamera" playsinline autoplay muted></video>
+    <div class="ambient-glow"></div>
+
+    <div class="topbar">
+      <div class="brand-group">
+        <div class="brand">observe lab</div>
+        <div class="brand-subtitle">后摄观察窗双模式诊断页</div>
+      </div>
+      <div class="status-group">
+        <div id="labStatus" class="status">等待开始</div>
+        <div id="labBuildStamp" class="build-stamp" aria-label="build version"></div>
+      </div>
+    </div>
+
+    <div class="flight-card lab-brief">
+      <div class="eyebrow">实验目标</div>
+      <div id="labTitle" class="specimen-name">对称模式 · 水平</div>
+      <div id="labMeta" class="specimen-meta">先确认后摄追近语义，再看整个空间里到底是谁被逼近到了中心。</div>
+    </div>
+
+    <div id="labCaptureCluster" class="capture-cluster lab-capture-cluster" aria-hidden="true">
+      <div id="labCaptureFrame" class="capture-frame is-active">
+        <div class="capture-frame-core"></div>
+        <div id="labCenterZone" class="lab-center-zone"></div>
+      </div>
+    </div>
+
+    <div id="labTargetsLayer" class="lab-targets-layer" aria-hidden="true"></div>
+
+    <div id="labDebug" class="observe-debug lab-debug-card" aria-live="polite">
+      <div class="observe-debug-title">observe lab</div>
+      <pre id="labDebugContent" class="observe-debug-content"></pre>
+      <div id="labDebugHint" class="observe-debug-hint">等待开始</div>
+    </div>
+
+    <div class="bottom-panel lab-panel">
+      <div class="bottom-panel-expanded">
+        <div class="panel-header">
+          <div class="panel-caption">诊断控制</div>
+        </div>
+
+        <div class="modes">
+          <button id="pairModeBtn" class="mode-btn active" type="button">对称模式</button>
+          <button id="sampleModeBtn" class="mode-btn" type="button">采样模式</button>
+        </div>
+
+        <div id="pairPresetGroup" class="lab-control-group">
+          <div class="lab-control-label">对称预设</div>
+          <div class="lab-chip-row">
+            <button id="presetHorizontalBtn" class="lab-chip active" type="button">水平</button>
+            <button id="presetVerticalBtn" class="lab-chip" type="button">垂直</button>
+            <button id="presetDiagonalBtn" class="lab-chip" type="button">斜向</button>
+          </div>
+        </div>
+
+        <div class="lab-control-group">
+          <div class="lab-control-label">当前想追的目标</div>
+          <div id="labTargetPicker" class="lab-target-picker"></div>
+        </div>
+
+        <div class="lab-actions">
+          <button id="labStartBtn" class="primary-btn" type="button">开始实验</button>
+          <button id="labRecenterBtn" class="secondary-btn" type="button">重标定观察窗</button>
+        </div>
+
+        <div class="hint">
+          <div>1. 这页不做飞行、惊走、timing，只测后摄“逼近谁”的语义。</div>
+          <div>2. 对着你想追的颜色或编号去移动后摄，看最后是谁更靠近中心区。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="observe-diagnostics-core.js"></script>
+  <script src="observe-lab.js"></script>
+</body>
+</html>

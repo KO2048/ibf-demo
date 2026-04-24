@@ -16,8 +16,10 @@
 ## 文件
 
 - `index.html`
+- `observe-lab.html`
 - `styles.css`
 - `app.js`
+- `observe-lab.js`
 - `todo.md`
 - `done.md`
 
@@ -80,6 +82,9 @@
 - 页面不直接显示 commit hash；真实 commit 与 build 标签的对应关系统一记录在 [todo.md](/Users/sylar/Desktop/projects/ifafa/todo.md) 的 `Change Log`
 - 开发态可通过 [https://ko2048.github.io/ibf-demo/?observeDebug=1](https://ko2048.github.io/ibf-demo/?observeDebug=1) 打开观察窗调试层，直接看后摄、连续运动向量、目标向量、距离变化与 startle 触发
 - 可用 `node scripts/observe-diagnostics.js` 跑离线诊断矩阵，先验证“后摄连续受力式追近”在 8 个方向上是否都能缩短距离
+- 如需去掉随机飞行干扰、只验证“后摄到底在把谁逼近中心”，可直接打开 [https://ko2048.github.io/ibf-demo/observe-lab.html](https://ko2048.github.io/ibf-demo/observe-lab.html)
+  - `对称模式`：蓝/红双目标镜像排布，最快查基本反向或镜像错误
+  - `采样模式`：8 个编号方块环绕中心，查看整个空间里到底是谁被逼近了
 - 滑动保留为备用兜底，不再是主玩法
 - 当前主玩法已切到“观察窗 + 追近 + 入框 + timing + 甩动”
 - 当前项目默认使用 `sliced rig`：把单张真实 PNG 切成 body / 前翅 / 后翅 5 层来驱动动作
