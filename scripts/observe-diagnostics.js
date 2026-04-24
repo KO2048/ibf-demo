@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 const {
-  computeOrientationTargets,
+  computeWindowTargets,
+  computeCameraMotion,
   computeObservationProjection,
   evaluateStartleGate,
   lerp,
@@ -9,37 +10,54 @@ const {
 } = require('../observe-diagnostics-core.js');
 
 const tuning = {
+  windowTargetSmoothing: 5.2,
   yawRangeAlpha: 28,
   gammaFallbackRange: 18,
   yawMaxOffsetX: 240,
   pitchRangeBeta: 18,
   pitchMaxOffsetY: 170,
-  pursuitDeadZone: 0.35,
-  pursuitAlignmentThreshold: 0.12,
-  pursuitIntentResponse: 0.08,
-  pursuitIntentMax: 18,
-  pursuitFarStrength: 0.82,
-  pursuitMidStrength: 0.44,
-  pursuitNearStrength: 0.16,
-  pursuitMidRadius: 180,
-  pursuitNearRadius: 104,
-  pursuitNoAutoCaptureRadius: 72,
-  pursuitDamping: 4.8,
-  pursuitAssistMaxOffset: 82,
+  windowSignX: -1,
+  windowSignY: -1,
+  yawMotionScale: 24,
+  pitchMotionScale: 20,
+  motionSignX: -1,
+  motionSignY: -1,
+  motionSmoothing: 0.26,
+  motionDeadZone: 1.05,
+  closingScoreThreshold: 0.1,
+  closingForceScale: 2.8,
+  closingForceFar: 0.92,
+  closingForceMid: 0.5,
+  closingForceNear: 0.18,
+  closingMidRadius: 208,
+  closingNearRadius: 116,
+  nearDampingRadius: 96,
+  noAutoCaptureRadius: 74,
+  slowdownFactor: 0.18,
+  assistDamping: 5.2,
+  maxWindowVelocity: 68,
 };
 
 const startleTuning = {
   enabled: true,
-  startleNearRadius: 86,
-  motionThreshold: 26,
-  jitterThreshold: 11,
-  confirmWindowMs: 160,
-  confirmBurstCount: 2,
+  startleNearRadius: 72,
+  motionThreshold: 31,
+  jitterThreshold: 14,
+  confirmWindowMs: 180,
+  confirmBurstCount: 3,
 };
+
+function normalizeVector(x, y, scale = 1) {
+  const magnitude = Math.hypot(x, y) || 1;
+  return {
+    x: (x / magnitude) * scale,
+    y: (y / magnitude) * scale,
+  };
+}
 
 function runProjectionScenario(name, options) {
   const projection = computeObservationProjection({ ...options, tuning });
-  const assistLerp = clamp((1 / 60) * tuning.pursuitDamping, 0, 1);
+  const assistLerp = clamp((1 / 60) * tuning.assistDamping, 0, 1);
   const assistOffsetX = lerp(0, projection.desiredAssistX, assistLerp);
   const assistOffsetY = lerp(0, projection.desiredAssistY, assistLerp);
   const screenX = options.worldX - (options.windowOffsetX + assistOffsetX);
@@ -54,7 +72,9 @@ function runProjectionScenario(name, options) {
     before: projection.distanceBefore,
     after: distanceAfter,
     delta,
-    alignment: projection.alignmentScore,
+    closing: projection.closingScore,
+    force: projection.radialForce,
+    leak: projection.tangentialLeak,
   };
 }
 
@@ -65,154 +85,113 @@ function printScenarioGroup(title, scenarios) {
     const status = result.ok ? 'PASS' : 'FAIL';
     console.log(
       `${status} ${result.name}\n` +
-      `  before=${result.before.toFixed(2)} after=${result.after.toFixed(2)} delta=${result.delta.toFixed(2)} align=${result.alignment.toFixed(2)}`,
+      `  before=${result.before.toFixed(2)} after=${result.after.toFixed(2)} delta=${result.delta.toFixed(2)} close=${result.closing.toFixed(2)} force=${result.force.toFixed(2)} leak=${result.leak.toFixed(2)}`,
     );
   }
 }
 
 console.log('Observe diagnostics simulation');
-console.log('Rear camera is the authoritative model. Front camera is only a compatibility branch.\n');
+console.log('Rear camera is the authoritative model. Pursuit is now evaluated as continuous closing force, not axis matching.\n');
 
-const orientationRear = computeOrientationTargets({
+const windowRear = computeWindowTargets({
   latestAlpha: 8,
-  latestBeta: 6,
+  latestBeta: -6,
   latestGamma: 8,
   baseAlpha: 0,
   baseBeta: 0,
   baseGamma: 0,
   tuning,
-  axisSignX: 1,
-  axisSignY: -1,
+  windowSignX: tuning.windowSignX,
+  windowSignY: tuning.windowSignY,
   mirrorSignX: 1,
 });
 
-const orientationFrontCompat = computeOrientationTargets({
-  latestAlpha: null,
-  latestBeta: 6,
-  latestGamma: 8,
-  baseAlpha: null,
-  baseBeta: 0,
-  baseGamma: 0,
+const motionRear = computeCameraMotion({
+  latestAlpha: 5,
+  latestBeta: -4,
+  latestGamma: 2,
+  prevAlpha: 0,
+  prevBeta: 0,
+  prevGamma: 0,
   tuning,
-  axisSignX: 1,
-  axisSignY: -1,
-  mirrorSignX: -1,
+  motionSignX: tuning.motionSignX,
+  motionSignY: tuning.motionSignY,
+  mirrorSignX: 1,
 });
 
-console.log('Rear orientation sample');
-console.log(`  alpha +8 -> targetOffsetX ${orientationRear.targetOffsetX.toFixed(2)} (${orientationRear.horizontalInputMode})`);
-console.log(`  beta  +6 -> targetOffsetY ${orientationRear.targetOffsetY.toFixed(2)}`);
-console.log('Front compatibility sample');
-console.log(`  gamma +8 -> targetOffsetX ${orientationFrontCompat.targetOffsetX.toFixed(2)} (${orientationFrontCompat.horizontalInputMode})`);
-console.log(`  beta  +6 -> targetOffsetY ${orientationFrontCompat.targetOffsetY.toFixed(2)}`);
+console.log('Rear camera sample');
+console.log(`  window target -> x ${windowRear.targetOffsetX.toFixed(2)} y ${windowRear.targetOffsetY.toFixed(2)} (${windowRear.horizontalInputMode})`);
+console.log(`  motion vector -> x ${motionRear.motionX.toFixed(2)} y ${motionRear.motionY.toFixed(2)} mag ${motionRear.motionMagnitude.toFixed(2)} (${motionRear.horizontalInputMode})`);
 
-printScenarioGroup('Rear camera pursuit matrix', [
-  {
-    name: 'right / correct pursuit',
-    worldX: 700,
-    worldY: 300,
-    frameX: 500,
-    frameY: 300,
-    windowOffsetX: 30,
+const frame = { x: 500, y: 320 };
+const directionSpecs = [
+  ['right', 1, 0],
+  ['left', -1, 0],
+  ['up', 0, -1],
+  ['down', 0, 1],
+  ['up-right', 1, -1],
+  ['up-left', -1, -1],
+  ['down-right', 1, 1],
+  ['down-left', -1, 1],
+];
+
+const correctScenarios = directionSpecs.map(([label, x, y]) => {
+  const target = normalizeVector(x, y, 180);
+  const motion = normalizeVector(x, y, 10);
+  return {
+    name: `${label} / closing motion`,
+    worldX: frame.x + target.x,
+    worldY: frame.y + target.y,
+    frameX: frame.x,
+    frameY: frame.y,
+    windowOffsetX: 0,
     windowOffsetY: 0,
-    intentX: 12,
-    intentY: 0,
+    motionX: motion.x,
+    motionY: motion.y,
     expectCloser: true,
-  },
-  {
-    name: 'right / wrong pursuit',
-    worldX: 700,
-    worldY: 300,
-    frameX: 500,
-    frameY: 300,
-    windowOffsetX: -30,
+  };
+});
+
+const wrongScenarios = directionSpecs.map(([label, x, y]) => {
+  const target = normalizeVector(x, y, 180);
+  const motion = normalizeVector(-x, -y, 10);
+  return {
+    name: `${label} / look-away motion`,
+    worldX: frame.x + target.x,
+    worldY: frame.y + target.y,
+    frameX: frame.x,
+    frameY: frame.y,
+    windowOffsetX: 0,
     windowOffsetY: 0,
-    intentX: -12,
-    intentY: 0,
+    motionX: motion.x,
+    motionY: motion.y,
     expectCloser: false,
-  },
-  {
-    name: 'left / correct pursuit',
-    worldX: 300,
-    worldY: 300,
-    frameX: 500,
-    frameY: 300,
-    windowOffsetX: -30,
-    windowOffsetY: 0,
-    intentX: -12,
-    intentY: 0,
-    expectCloser: true,
-  },
-  {
-    name: 'up / correct pursuit',
-    worldX: 500,
-    worldY: 180,
-    frameX: 500,
-    frameY: 320,
-    windowOffsetX: 0,
-    windowOffsetY: -24,
-    intentX: 0,
-    intentY: -10,
-    expectCloser: true,
-  },
-  {
-    name: 'down / correct pursuit',
-    worldX: 500,
-    worldY: 500,
-    frameX: 500,
-    frameY: 300,
-    windowOffsetX: 0,
-    windowOffsetY: 30,
-    intentX: 0,
-    intentY: 12,
-    expectCloser: true,
-  },
-  {
-    name: 'down-right / correct pursuit',
-    worldX: 640,
-    worldY: 430,
-    frameX: 500,
-    frameY: 300,
-    windowOffsetX: 16,
-    windowOffsetY: 14,
-    intentX: 10,
-    intentY: 9,
-    expectCloser: true,
-  },
+  };
+});
+
+printScenarioGroup('Rear camera vector sweep / closing motion', correctScenarios);
+printScenarioGroup('Rear camera vector sweep / look-away motion', wrongScenarios);
+
+printScenarioGroup('Near zone damping', [
   {
     name: 'near zone / no auto capture',
-    worldX: 562,
-    worldY: 300,
-    frameX: 500,
-    frameY: 300,
+    worldX: 560,
+    worldY: 320,
+    frameX: frame.x,
+    frameY: frame.y,
     windowOffsetX: 0,
     windowOffsetY: 0,
-    intentX: 12,
-    intentY: 0,
-    expectCloser: false,
-  },
-]);
-
-printScenarioGroup('Front compatibility branch', [
-  {
-    name: 'front camera / mirrored right pursuit',
-    worldX: 700,
-    worldY: 300,
-    frameX: 500,
-    frameY: 300,
-    windowOffsetX: -30,
-    windowOffsetY: 0,
-    intentX: -12,
-    intentY: 0,
+    motionX: 10,
+    motionY: 0,
     expectCloser: false,
   },
 ]);
 
 console.log('\n=== Startle gate diagnostics ===');
 const calmStartle = evaluateStartleGate({
-  distanceToButterfly: 74,
-  magnitude: 12,
-  jitter: 4,
+  distanceToButterfly: 78,
+  magnitude: 14,
+  jitter: 5,
   tuning: startleTuning,
   pendingBurstCount: 0,
   pendingSince: 0,
@@ -224,24 +203,33 @@ console.log(
 );
 
 const burstStartleA = evaluateStartleGate({
-  distanceToButterfly: 60,
-  magnitude: 31,
-  jitter: 12,
+  distanceToButterfly: 58,
+  magnitude: 36,
+  jitter: 18,
   tuning: startleTuning,
   pendingBurstCount: 0,
   pendingSince: 0,
   nowMs: 200,
 });
 const burstStartleB = evaluateStartleGate({
-  distanceToButterfly: 60,
-  magnitude: 29,
-  jitter: 10,
+  distanceToButterfly: 58,
+  magnitude: 34,
+  jitter: 16,
   tuning: startleTuning,
   pendingBurstCount: burstStartleA.pendingBurstCount,
   pendingSince: burstStartleA.pendingSince,
-  nowMs: 280,
+  nowMs: 290,
+});
+const burstStartleC = evaluateStartleGate({
+  distanceToButterfly: 58,
+  magnitude: 35,
+  jitter: 17,
+  tuning: startleTuning,
+  pendingBurstCount: burstStartleB.pendingBurstCount,
+  pendingSince: burstStartleB.pendingSince,
+  nowMs: 340,
 });
 console.log(
-  `${burstStartleB.triggered ? 'PASS' : 'FAIL'} near burst / gated trigger\n` +
-  `  pendingA=${burstStartleA.pendingBurstCount} triggeredB=${burstStartleB.triggered} reason=${burstStartleB.gateReason || burstStartleA.gateReason || '--'}`,
+  `${burstStartleC.triggered ? 'PASS' : 'FAIL'} near burst / gated trigger\n` +
+  `  pendingA=${burstStartleA.pendingBurstCount} pendingB=${burstStartleB.pendingBurstCount} triggeredC=${burstStartleC.triggered} reason=${burstStartleC.gateReason || burstStartleB.gateReason || burstStartleA.gateReason || '--'}`,
 );

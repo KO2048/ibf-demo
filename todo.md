@@ -36,9 +36,9 @@
 
 | ID | Title | Category | Status | Priority | Origin Time | Origin Source | Origin Ref | Current Phase | 填写人 | 填写时间 | 最后修改人 | 最后修改时间 | 实现于计划 | 实现于版本 | 实现于 Commit | 完成时间 | Validation | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| NOW-001 | 稳定观察窗坐标体系与追逐辅助 | engineering | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:32 CST | 后摄观察窗“追近语义重做”计划 | `observe-v2` |  |  | 已把后摄追逐主模型从 `gamma` 偏转切到 `alpha + beta` 语义，并加入 startle 连续确认门槛；待 iPhone 后摄复测“追近 / 看丢 / 惊走”三类问题 | 先让“越追越远”消失，再收可抓性和稳手感；当前仍不改主玩法结构 |
+| NOW-001 | 稳定观察窗坐标体系与追逐辅助 | engineering | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:58 CST | 后摄观察窗“连续受力式追近”重做计划 | `observe-v3` |  |  | 已把后摄追逐主模型从“方向匹配”切到“连续运动向量 + 距离缩短力”，并继续收紧 startle 触发门槛；待 iPhone 后摄复测“越追越远”是否消失 | 先让“越追越远”消失，再收可抓性和稳手感；当前仍不改主玩法结构 |
 | NOW-002 | iPhone Safari 验证“追近 / 看丢 / 惊走”三段体验 | ux | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 2 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:32 CST | TBD | TBD |  |  | 待下一轮 GitHub Pages 实测；重点验证右 / 下 / 右下三种后摄追近是否更符合直觉 | 成功标准：追它有帮助、不会太难、追错更像看丢、动作轻一点更好抓、整体更像在追蝴蝶 |
-| NOW-003 | 给页面加入可见 build / version 标记 | process | active | P1 | 2026-04-24 | user-feedback | GitHub Pages 缓存混淆反馈 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:32 CST | Build 标记一致性修复计划 | `observe-v2` |  |  | 页面当前本地将由 `BUILD_INFO` 渲染 `build observe-v2 · main`；真实 commit 继续由 `Change Log` 追溯 | 用于实机测试时确认缓存与 build 对应关系，避免 UI 文案与真实 commit 再次过期 |
+| NOW-003 | 给页面加入可见 build / version 标记 | process | active | P1 | 2026-04-24 | user-feedback | GitHub Pages 缓存混淆反馈 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:58 CST | Build 标记一致性修复计划 | `observe-v3` |  |  | 页面当前本地将由 `BUILD_INFO` 渲染 `build observe-v3 · main`；真实 commit 继续由 `Change Log` 追溯 | 用于实机测试时确认缓存与 build 对应关系，避免 UI 文案与真实 commit 再次过期 |
 
 ## Next
 
@@ -94,6 +94,7 @@
 - 2026-04-24 20:32 CST · Codex：这轮把“后摄追逐语义”作为第一优先级，横向主输入切到 `alpha`、纵向按后摄语义重算 `beta`；如果仍怪，再收 startle，而不是继续怀疑主玩法结构。
 - 2026-04-24 20:11 CST · Codex：即使 Safari 异常拿到前摄，调试层也会按镜像语义计算观察窗目标，避免把“前摄异常”误诊成“后摄方向全反”。
 - 2026-04-24 20:12 CST · Codex：用户反馈当前捕获区位置偏高，后续应调整到画面居中；该需求本轮只记入 `todo.md`，不直接改实现。
+- 2026-04-24 20:58 CST · Codex：当前主问题已从“轴向语义可能反了”升级为“追逐语义仍然太像上下左右判定”；本地已切到连续受力式追近模型，下一轮只验证“越追越远”是否消失。
 
 ## Decision Log
 
@@ -113,6 +114,7 @@
 - 2026-04-24 19:41 CST · Codex：页面上的 build 标记不再显示写死的 commit hash；UI 只显示稳定 build 标签，真实 commit 统一在 `todo.md` 中追溯。
 - 2026-04-24 20:02 CST · Codex：后置摄像头正式锁定为观察/捕获世界的主窗口；前置摄像头仅作为异常诊断对象，不参与当前主体验设计。
 - 2026-04-24 20:32 CST · Codex：后摄观察窗的“追近”语义正式重做为 `alpha + beta` 主模型；`gamma` 只在 `alpha` 不可用时做横向 fallback。
+- 2026-04-24 20:58 CST · Codex：后摄追逐语义进一步升级为“连续运动向量 + 距离缩短力”；不再用“上下左右/哪个轴对了”解释追近是否成立。
 - 2026-04-24 20:12 CST · Codex：本线程关于“捕获区偏高”的输入仅作为当前主线待办记录；纠正前次越界处理，不在本轮直接改产品代码。
 
 ## Change Log
@@ -130,3 +132,4 @@
 - 2026-04-24 20:32 CST · Codex：本地切换到 `observe-v2` 语义重做版：后摄横向追逐优先读 `alpha`，纵向按后摄语义重算 `beta`，并把 startle 改成连续确认后才触发；待下一轮 GitHub Pages 后摄真机验证。
 - 2026-04-24 20:11 CST · Codex：补充前摄异常分支的镜像调试语义；后摄主路径不变，诊断时避免把异常前摄误读成后摄追逐方向 bug。
 - 2026-04-24 20:12 CST · Codex：纠正前次越界操作，撤回“捕获区居中 / 飞行中心下调”相关实现，只将用户反馈记入当前主线 `todo` 与验证项。
+- 2026-04-24 20:58 CST · Codex：本地切换到 `observe-v3`：追逐输入从绝对朝向改为短时连续运动向量，调试层改看 `motion / closing force / butterfly vec`，离线脚本改成 8 向量扫角验证；待真机验证“越追越远”是否消失。

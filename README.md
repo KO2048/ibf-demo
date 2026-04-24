@@ -78,8 +78,8 @@
 - 进入主玩法后，底部控制区会自动收起为迷你条；点击后可再次展开
 - 页面会显示一个低干扰的稳定 build 标签，方便 iPhone Safari 上区分缓存和当前测试版本
 - 页面不直接显示 commit hash；真实 commit 与 build 标签的对应关系统一记录在 [todo.md](/Users/sylar/Desktop/projects/ifafa/todo.md) 的 `Change Log`
-- 开发态可通过 [https://ko2048.github.io/ibf-demo/?observeDebug=1](https://ko2048.github.io/ibf-demo/?observeDebug=1) 打开观察窗调试层，直接看后摄、方向映射、距离变化与 startle 触发
-- 可用 `node scripts/observe-diagnostics.js` 跑离线诊断矩阵，先验证“后摄 alpha + beta 观察窗”语义下的追近是否成立
+- 开发态可通过 [https://ko2048.github.io/ibf-demo/?observeDebug=1](https://ko2048.github.io/ibf-demo/?observeDebug=1) 打开观察窗调试层，直接看后摄、连续运动向量、目标向量、距离变化与 startle 触发
+- 可用 `node scripts/observe-diagnostics.js` 跑离线诊断矩阵，先验证“后摄连续受力式追近”在 8 个方向上是否都能缩短距离
 - 滑动保留为备用兜底，不再是主玩法
 - 当前主玩法已切到“观察窗 + 追近 + 入框 + timing + 甩动”
 - 当前项目默认使用 `sliced rig`：把单张真实 PNG 切成 body / 前翅 / 后翅 5 层来驱动动作
@@ -102,8 +102,8 @@
 - 当前“追蝴蝶”的逻辑是：
   - 蝴蝶在虚拟空间独立飞行
   - 摄像头像观察这个空间的观察窗，当前主路径固定为后置摄像头
-  - 后摄横向追逐优先读取“转向”语义，纵向追逐读取“俯仰”语义，而不是单纯把手机倾斜当摇杆
-  - 朝蝴蝶方向移动镜头，会更容易逼近它
+  - 后摄追逐不再按“上下左右”判断，而是把你的短时相机运动当作连续向量，判断它是否真的在缩短你与蝴蝶的相对距离
+  - 朝蝴蝶方向移动镜头，会更容易逼近它；朝错方向移动时，更像把观察窗移开而不是“触发一个方向判定失败”
   - 朝错方向移动时，不是惊走它，而是更容易把它看丢
   - 靠近后如果动作太大，才会真的惊走蝴蝶
 - 当前飞行拟态重点是：

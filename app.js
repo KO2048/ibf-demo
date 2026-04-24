@@ -66,36 +66,41 @@ const FLIGHT_TUNING = {
 };
 
 const WINDOW_TUNING = {
-  smoothing: 5.2,
+  windowTargetSmoothing: 5.2,
   yawRangeAlpha: 28,
   gammaFallbackRange: 18,
   yawMaxOffsetX: 240,
   pitchRangeBeta: 18,
   pitchMaxOffsetY: 170,
-  axisSignX: 1,
-  axisSignY: -1,
-  pursuitDeadZone: 0.35,
-  pursuitAlignmentThreshold: 0.12,
-  pursuitIntentResponse: 0.08,
-  pursuitIntentMax: 18,
-  pursuitFarStrength: 0.82,
-  pursuitMidStrength: 0.44,
-  pursuitNearStrength: 0.16,
-  pursuitMidRadius: 180,
-  pursuitNearRadius: 104,
-  pursuitNoAutoCaptureRadius: 72,
-  pursuitSlowdownFactor: 0.22,
-  pursuitDamping: 4.8,
-  pursuitAssistMaxOffset: 82,
+  windowSignX: -1,
+  windowSignY: -1,
+  yawMotionScale: 24,
+  pitchMotionScale: 20,
+  motionSignX: -1,
+  motionSignY: -1,
+  motionSmoothing: 0.26,
+  motionDeadZone: 1.05,
+  closingScoreThreshold: 0.1,
+  closingForceScale: 2.8,
+  closingForceFar: 0.92,
+  closingForceMid: 0.5,
+  closingForceNear: 0.18,
+  closingMidRadius: 208,
+  closingNearRadius: 116,
+  nearDampingRadius: 96,
+  noAutoCaptureRadius: 74,
+  slowdownFactor: 0.18,
+  assistDamping: 5.2,
+  maxWindowVelocity: 68,
 };
 
 const STARTLE_TUNING = {
   enabled: true,
-  startleNearRadius: 86,
-  motionThreshold: 26,
-  jitterThreshold: 11,
-  confirmWindowMs: 160,
-  confirmBurstCount: 2,
+  startleNearRadius: 72,
+  motionThreshold: 31,
+  jitterThreshold: 14,
+  confirmWindowMs: 180,
+  confirmBurstCount: 3,
   escapeBoost: 15,
 };
 
@@ -111,7 +116,7 @@ const CAPTURE_TUNING = {
 };
 
 const BUILD_INFO = {
-  label: 'observe-v2',
+  label: 'observe-v3',
   channel: 'main',
 };
 
@@ -311,14 +316,18 @@ function createCameraState() {
     latestAlpha: null,
     latestBeta: null,
     latestGamma: null,
+    prevAlpha: null,
+    prevBeta: null,
+    prevGamma: null,
     baseAlpha: null,
     baseBeta: null,
     baseGamma: null,
     needsCalibration: true,
     orientationReady: false,
     horizontalInputMode: 'gamma-fallback',
-    intentX: 0,
-    intentY: 0,
+    motionX: 0,
+    motionY: 0,
+    motionMagnitude: 0,
     targetOffsetX: 0,
     targetOffsetY: 0,
     windowOffsetX: 0,
@@ -327,6 +336,9 @@ function createCameraState() {
     assistOffsetY: 0,
     smoothedDeltaX: 0,
     smoothedDeltaY: 0,
+    smoothedAlphaDelta: 0,
+    smoothedBetaDelta: 0,
+    smoothedGammaDelta: 0,
     facingMode: 'unknown',
     cameraLabel: '',
     isMirrored: false,
@@ -338,9 +350,12 @@ function createCameraState() {
 
 function createPursuitState() {
   return {
-    alignmentScore: 0,
+    butterflyVecX: 0,
+    butterflyVecY: 0,
     distanceToButterfly: 0,
-    pursuitInfluence: 0,
+    closingScore: 0,
+    radialForce: 0,
+    tangentialLeak: 0,
     nearZoneFactor: 0,
   };
 }
@@ -392,7 +407,7 @@ const normalizeAngleDelta = diagnosticsCore.normalizeAngleDelta || function norm
   return next;
 };
 
-const computeOrientationTargets = diagnosticsCore.computeOrientationTargets || function computeOrientationTargetsFallback({
+const computeWindowTargets = diagnosticsCore.computeWindowTargets || function computeWindowTargetsFallback({
   latestAlpha,
   latestBeta,
   latestGamma,
@@ -400,8 +415,8 @@ const computeOrientationTargets = diagnosticsCore.computeOrientationTargets || f
   baseBeta,
   baseGamma,
   tuning,
-  axisSignX = 1,
-  axisSignY = 1,
+  windowSignX = 1,
+  windowSignY = 1,
   mirrorSignX = 1,
 }) {
   const betaDelta = clamp(latestBeta - baseBeta, -tuning.pitchRangeBeta, tuning.pitchRangeBeta);
@@ -415,17 +430,55 @@ const computeOrientationTargets = diagnosticsCore.computeOrientationTargets || f
   const horizontalInputMode = hasAlpha ? 'alpha' : 'gamma-fallback';
   const horizontalDelta = horizontalInputMode === 'alpha' ? alphaDelta : mirrorSignX * gammaDelta;
   const horizontalRange = horizontalInputMode === 'alpha' ? tuning.yawRangeAlpha : tuning.gammaFallbackRange;
-  const targetOffsetX = axisSignX * (horizontalDelta / horizontalRange) * tuning.yawMaxOffsetX;
-  const targetOffsetY = axisSignY * (betaDelta / tuning.pitchRangeBeta) * tuning.pitchMaxOffsetY;
+  const targetOffsetX = windowSignX * (horizontalDelta / horizontalRange) * tuning.yawMaxOffsetX;
+  const targetOffsetY = windowSignY * (betaDelta / tuning.pitchRangeBeta) * tuning.pitchMaxOffsetY;
   return {
     alphaDelta,
     betaDelta,
     gammaDelta,
     horizontalInputMode,
-    intentX: targetOffsetX,
-    intentY: targetOffsetY,
     targetOffsetX,
     targetOffsetY,
+  };
+};
+
+const computeCameraMotion = diagnosticsCore.computeCameraMotion || function computeCameraMotionFallback({
+  latestAlpha,
+  latestBeta,
+  latestGamma,
+  prevAlpha,
+  prevBeta,
+  prevGamma,
+  tuning,
+  motionSignX = 1,
+  motionSignY = 1,
+  mirrorSignX = 1,
+}) {
+  const hasAlpha = Number.isFinite(latestAlpha) && Number.isFinite(prevAlpha);
+  const rawAlphaDelta = hasAlpha ? normalizeAngleDelta(latestAlpha - prevAlpha) : 0;
+  const alphaDelta = clamp(rawAlphaDelta, -tuning.yawRangeAlpha, tuning.yawRangeAlpha);
+  const rawGammaDelta = Number.isFinite(latestGamma) && Number.isFinite(prevGamma)
+    ? latestGamma - prevGamma
+    : 0;
+  const gammaDelta = clamp(rawGammaDelta, -tuning.gammaFallbackRange, tuning.gammaFallbackRange);
+  const rawBetaDelta = Number.isFinite(latestBeta) && Number.isFinite(prevBeta)
+    ? latestBeta - prevBeta
+    : 0;
+  const betaDelta = clamp(rawBetaDelta, -tuning.pitchRangeBeta, tuning.pitchRangeBeta);
+  const horizontalInputMode = hasAlpha ? 'alpha' : 'gamma-fallback';
+  const horizontalDelta = horizontalInputMode === 'alpha' ? alphaDelta : mirrorSignX * gammaDelta;
+  const horizontalRange = horizontalInputMode === 'alpha' ? tuning.yawRangeAlpha : tuning.gammaFallbackRange;
+  const motionX = motionSignX * (horizontalDelta / horizontalRange) * tuning.yawMotionScale;
+  const motionY = motionSignY * (betaDelta / tuning.pitchRangeBeta) * tuning.pitchMotionScale;
+  const motionMagnitude = Math.hypot(motionX, motionY);
+  return {
+    alphaDelta,
+    betaDelta,
+    gammaDelta,
+    horizontalInputMode,
+    motionX,
+    motionY,
+    motionMagnitude,
   };
 };
 
@@ -436,59 +489,61 @@ const computeObservationProjection = diagnosticsCore.computeObservationProjectio
   frameY,
   windowOffsetX,
   windowOffsetY,
-  intentX,
-  intentY,
+  motionX,
+  motionY,
   tuning,
 }) {
   const baseScreenX = worldX - windowOffsetX;
   const baseScreenY = worldY - windowOffsetY;
-  const dx = baseScreenX - frameX;
-  const dy = baseScreenY - frameY;
-  const distanceBefore = Math.hypot(dx, dy);
-  const intentMag = Math.hypot(intentX, intentY);
+  const butterflyVecX = baseScreenX - frameX;
+  const butterflyVecY = baseScreenY - frameY;
+  const distanceBefore = Math.hypot(butterflyVecX, butterflyVecY);
+  const motionMagnitude = Math.hypot(motionX, motionY);
 
-  let alignmentScore = 0;
-  let pursuitInfluence = 0;
+  let closingScore = 0;
+  let radialForce = 0;
+  let tangentialLeak = 0;
   let desiredAssistX = 0;
   let desiredAssistY = 0;
 
-  if (distanceBefore > 1 && intentMag > tuning.pursuitDeadZone) {
-    const dirX = dx / distanceBefore;
-    const dirY = dy / distanceBefore;
-    const normalizedIntentX = intentX / intentMag;
-    const normalizedIntentY = intentY / intentMag;
-    alignmentScore = dirX * normalizedIntentX + dirY * normalizedIntentY;
+  if (distanceBefore > 1 && motionMagnitude > tuning.motionDeadZone) {
+    const dirX = butterflyVecX / distanceBefore;
+    const dirY = butterflyVecY / distanceBefore;
+    const normalizedMotionX = motionX / motionMagnitude;
+    const normalizedMotionY = motionY / motionMagnitude;
+    closingScore = dirX * normalizedMotionX + dirY * normalizedMotionY;
+    tangentialLeak = Math.sqrt(Math.max(0, 1 - clamp(closingScore, -1, 1) ** 2));
 
-    if (alignmentScore > tuning.pursuitAlignmentThreshold) {
+    if (closingScore > tuning.closingScoreThreshold) {
       const strength = getPursuitStrength(distanceBefore);
-      const scaledIntent = clamp(
-        intentMag * tuning.pursuitIntentResponse,
+      const scaledMotion = clamp(
+        motionMagnitude * tuning.closingForceScale,
         0,
-        tuning.pursuitIntentMax,
+        tuning.maxWindowVelocity,
       );
-      const assistMagnitude = clamp(
-        (alignmentScore - tuning.pursuitAlignmentThreshold)
-          / (1 - tuning.pursuitAlignmentThreshold)
-          * scaledIntent
+      radialForce = clamp(
+        (closingScore - tuning.closingScoreThreshold)
+          / (1 - tuning.closingScoreThreshold)
+          * scaledMotion
           * strength,
         0,
-        tuning.pursuitAssistMaxOffset,
+        tuning.maxWindowVelocity,
       );
-      pursuitInfluence = assistMagnitude;
-      desiredAssistX = dirX * assistMagnitude;
-      desiredAssistY = dirY * assistMagnitude;
+      desiredAssistX = dirX * radialForce;
+      desiredAssistY = dirY * radialForce;
     }
   }
 
   return {
     baseScreenX,
     baseScreenY,
-    dx,
-    dy,
+    butterflyVecX,
+    butterflyVecY,
     distanceBefore,
-    intentMag,
-    alignmentScore,
-    pursuitInfluence,
+    motionMagnitude,
+    closingScore,
+    radialForce,
+    tangentialLeak,
     desiredAssistX,
     desiredAssistY,
   };
@@ -575,22 +630,14 @@ function getObserveDebugHint() {
   if (startleState.pendingBurstCount > 0) return 'startle 过敏';
   if (!butterflyState.inView) return '更像看丢了它';
 
-  const moving = Math.hypot(cameraState.intentX, cameraState.intentY) > WINDOW_TUNING.pursuitDeadZone;
-  if (!moving) return '等待追逐输入';
-
-  if (
-    pursuitState.alignmentScore > WINDOW_TUNING.pursuitAlignmentThreshold
-    && cameraState.debugDistanceDelta < -0.45
-  ) return '追近有效';
-
-  if (pursuitState.alignmentScore < -WINDOW_TUNING.pursuitAlignmentThreshold) {
-    return Math.abs(cameraState.intentX) >= Math.abs(cameraState.intentY) ? '横向语义不对' : '纵向语义不对';
+  if (cameraState.motionMagnitude <= WINDOW_TUNING.motionDeadZone) return '等待追近动作';
+  if (pursuitState.closingScore < -WINDOW_TUNING.closingScoreThreshold) return '你在把观察窗移开';
+  if (Math.abs(pursuitState.closingScore) <= WINDOW_TUNING.closingScoreThreshold * 1.2) return '你在横擦目标';
+  if (pursuitState.radialForce > 0 && pursuitState.distanceToButterfly <= WINDOW_TUNING.nearDampingRadius) {
+    return '近区阻尼中';
   }
-
-  if (
-    pursuitState.alignmentScore > WINDOW_TUNING.pursuitAlignmentThreshold
-    && cameraState.debugDistanceDelta >= -0.45
-  ) return '追近感偏弱';
+  if (pursuitState.radialForce > 0 && cameraState.debugDistanceDelta < -0.35) return '追近有效';
+  if (pursuitState.radialForce > 0) return '追近力不足';
 
   return '观察中';
 }
@@ -606,12 +653,13 @@ function renderObserveDebugUi() {
     `input    ${cameraState.horizontalInputMode}`,
     `orient   alpha ${formatDebugNumber(cameraState.latestAlpha)}  beta ${formatDebugNumber(cameraState.latestBeta)}  gamma ${formatDebugNumber(cameraState.latestGamma)}`,
     `base     alpha ${formatDebugNumber(cameraState.baseAlpha)}  beta ${formatDebugNumber(cameraState.baseBeta)}  gamma ${formatDebugNumber(cameraState.baseGamma)}`,
-    `intent   x ${formatDebugNumber(cameraState.intentX)}  y ${formatDebugNumber(cameraState.intentY)}`,
+    `motion   x ${formatDebugNumber(cameraState.motionX, 2)}  y ${formatDebugNumber(cameraState.motionY, 2)}  mag ${formatDebugNumber(cameraState.motionMagnitude, 2)}`,
     `target   x ${formatDebugNumber(cameraState.targetOffsetX)}  y ${formatDebugNumber(cameraState.targetOffsetY)}`,
     `window   x ${formatDebugNumber(cameraState.windowOffsetX)}  y ${formatDebugNumber(cameraState.windowOffsetY)}`,
-    `delta    x ${formatDebugNumber(cameraState.smoothedDeltaX, 2)}  y ${formatDebugNumber(cameraState.smoothedDeltaY, 2)}`,
+    `orientΔ  alpha ${formatDebugNumber(cameraState.smoothedAlphaDelta, 2)}  beta ${formatDebugNumber(cameraState.smoothedBetaDelta, 2)}  gamma ${formatDebugNumber(cameraState.smoothedGammaDelta, 2)}`,
     `dist     before ${formatDebugNumber(cameraState.debugDistanceBefore)}  after ${formatDebugNumber(cameraState.debugDistanceAfter)}  d ${formatDebugNumber(cameraState.debugDistanceDelta, 2)}`,
-    `pursuit  align ${formatDebugNumber(pursuitState.alignmentScore, 2)}  inf ${formatDebugNumber(pursuitState.pursuitInfluence, 2)}`,
+    `targetv  x ${formatDebugNumber(pursuitState.butterflyVecX, 1)}  y ${formatDebugNumber(pursuitState.butterflyVecY, 1)}`,
+    `pursuit  close ${formatDebugNumber(pursuitState.closingScore, 2)}  force ${formatDebugNumber(pursuitState.radialForce, 2)}  leak ${formatDebugNumber(pursuitState.tangentialLeak, 2)}`,
     `startle  on ${startleState.isStartled ? 'yes' : 'no'}  pending ${startleState.pendingBurstCount}  gate ${startleState.gateReason || '--'}`,
     `burst    ${formatDebugNumber(startleState.recentMotionBurst, 2)}  jitter ${formatDebugNumber(startleState.recentJitter, 2)}  reason ${startleState.lastTriggerReason || '--'}`,
   ];
@@ -750,8 +798,12 @@ function recenterObservationWindow() {
     && (Number.isFinite(cameraState.baseAlpha) || Number.isFinite(cameraState.baseGamma));
   cameraState.needsCalibration = !cameraState.orientationReady;
   cameraState.horizontalInputMode = Number.isFinite(cameraState.baseAlpha) ? 'alpha' : 'gamma-fallback';
-  cameraState.intentX = 0;
-  cameraState.intentY = 0;
+  cameraState.prevAlpha = cameraState.latestAlpha;
+  cameraState.prevBeta = cameraState.latestBeta;
+  cameraState.prevGamma = cameraState.latestGamma;
+  cameraState.motionX = 0;
+  cameraState.motionY = 0;
+  cameraState.motionMagnitude = 0;
   cameraState.targetOffsetX = 0;
   cameraState.targetOffsetY = 0;
   cameraState.windowOffsetX = 0;
@@ -760,11 +812,14 @@ function recenterObservationWindow() {
   cameraState.assistOffsetY = 0;
   cameraState.smoothedDeltaX = 0;
   cameraState.smoothedDeltaY = 0;
+  cameraState.smoothedAlphaDelta = 0;
+  cameraState.smoothedBetaDelta = 0;
+  cameraState.smoothedGammaDelta = 0;
 }
 
 function refreshObservationTargets() {
   if (!cameraState.orientationReady) return;
-  const orientation = computeOrientationTargets({
+  const windowTarget = computeWindowTargets({
     latestAlpha: cameraState.latestAlpha,
     latestBeta: cameraState.latestBeta,
     latestGamma: cameraState.latestGamma,
@@ -772,22 +827,41 @@ function refreshObservationTargets() {
     baseBeta: cameraState.baseBeta,
     baseGamma: cameraState.baseGamma,
     tuning: WINDOW_TUNING,
-    axisSignX: WINDOW_TUNING.axisSignX,
-    axisSignY: WINDOW_TUNING.axisSignY,
+    windowSignX: WINDOW_TUNING.windowSignX,
+    windowSignY: WINDOW_TUNING.windowSignY,
     mirrorSignX: cameraState.isMirrored ? -1 : 1,
   });
-  cameraState.horizontalInputMode = orientation.horizontalInputMode;
-  cameraState.intentX = orientation.intentX;
-  cameraState.intentY = orientation.intentY;
-  cameraState.targetOffsetX = orientation.targetOffsetX;
-  cameraState.targetOffsetY = orientation.targetOffsetY;
+  const motion = computeCameraMotion({
+    latestAlpha: cameraState.latestAlpha,
+    latestBeta: cameraState.latestBeta,
+    latestGamma: cameraState.latestGamma,
+    prevAlpha: cameraState.prevAlpha,
+    prevBeta: cameraState.prevBeta,
+    prevGamma: cameraState.prevGamma,
+    tuning: WINDOW_TUNING,
+    motionSignX: WINDOW_TUNING.motionSignX,
+    motionSignY: WINDOW_TUNING.motionSignY,
+    mirrorSignX: cameraState.isMirrored ? -1 : 1,
+  });
+  cameraState.horizontalInputMode = motion.horizontalInputMode;
+  cameraState.motionX = lerp(cameraState.motionX, motion.motionX, WINDOW_TUNING.motionSmoothing);
+  cameraState.motionY = lerp(cameraState.motionY, motion.motionY, WINDOW_TUNING.motionSmoothing);
+  cameraState.motionMagnitude = Math.hypot(cameraState.motionX, cameraState.motionY);
+  cameraState.smoothedAlphaDelta = lerp(cameraState.smoothedAlphaDelta, motion.alphaDelta, WINDOW_TUNING.motionSmoothing);
+  cameraState.smoothedBetaDelta = lerp(cameraState.smoothedBetaDelta, motion.betaDelta, WINDOW_TUNING.motionSmoothing);
+  cameraState.smoothedGammaDelta = lerp(cameraState.smoothedGammaDelta, motion.gammaDelta, WINDOW_TUNING.motionSmoothing);
+  cameraState.targetOffsetX = windowTarget.targetOffsetX;
+  cameraState.targetOffsetY = windowTarget.targetOffsetY;
+  cameraState.prevAlpha = cameraState.latestAlpha;
+  cameraState.prevBeta = cameraState.latestBeta;
+  cameraState.prevGamma = cameraState.latestGamma;
 }
 
 function updateObservationWindow(dt) {
   const active = mode === 'shake' && motionPermission === 'granted' && cameraState.orientationReady;
   const desiredX = active ? cameraState.targetOffsetX : 0;
   const desiredY = active ? cameraState.targetOffsetY : 0;
-  const lerpAmount = clamp(dt * WINDOW_TUNING.smoothing, 0, 1);
+  const lerpAmount = clamp(dt * WINDOW_TUNING.windowTargetSmoothing, 0, 1);
 
   const prevX = cameraState.windowOffsetX;
   const prevY = cameraState.windowOffsetY;
@@ -800,8 +874,8 @@ function updateObservationWindow(dt) {
   cameraState.smoothedDeltaY = lerp(cameraState.smoothedDeltaY, deltaY, clamp(dt * 10.5, 0, 1));
 
   if (!active) {
-    cameraState.assistOffsetX = lerp(cameraState.assistOffsetX, 0, clamp(dt * WINDOW_TUNING.pursuitDamping, 0, 1));
-    cameraState.assistOffsetY = lerp(cameraState.assistOffsetY, 0, clamp(dt * WINDOW_TUNING.pursuitDamping, 0, 1));
+    cameraState.assistOffsetX = lerp(cameraState.assistOffsetX, 0, clamp(dt * WINDOW_TUNING.assistDamping, 0, 1));
+    cameraState.assistOffsetY = lerp(cameraState.assistOffsetY, 0, clamp(dt * WINDOW_TUNING.assistDamping, 0, 1));
   }
 }
 
@@ -814,38 +888,38 @@ function getCaptureFrameCenter() {
 }
 
 function getPursuitStrength(distance) {
-  if (distance <= WINDOW_TUNING.pursuitNoAutoCaptureRadius) return 0;
-  if (distance <= WINDOW_TUNING.pursuitNearRadius) {
+  if (distance <= WINDOW_TUNING.noAutoCaptureRadius) return 0;
+  if (distance <= WINDOW_TUNING.closingNearRadius) {
     return lerp(
       0,
-      WINDOW_TUNING.pursuitNearStrength,
-      (distance - WINDOW_TUNING.pursuitNoAutoCaptureRadius)
-        / Math.max(1, WINDOW_TUNING.pursuitNearRadius - WINDOW_TUNING.pursuitNoAutoCaptureRadius),
+      WINDOW_TUNING.closingForceNear,
+      (distance - WINDOW_TUNING.noAutoCaptureRadius)
+        / Math.max(1, WINDOW_TUNING.closingNearRadius - WINDOW_TUNING.noAutoCaptureRadius),
     );
   }
-  if (distance <= WINDOW_TUNING.pursuitMidRadius) {
+  if (distance <= WINDOW_TUNING.closingMidRadius) {
     return lerp(
-      WINDOW_TUNING.pursuitNearStrength,
-      WINDOW_TUNING.pursuitMidStrength,
-      (distance - WINDOW_TUNING.pursuitNearRadius)
-        / Math.max(1, WINDOW_TUNING.pursuitMidRadius - WINDOW_TUNING.pursuitNearRadius),
+      WINDOW_TUNING.closingForceNear,
+      WINDOW_TUNING.closingForceMid,
+      (distance - WINDOW_TUNING.closingNearRadius)
+        / Math.max(1, WINDOW_TUNING.closingMidRadius - WINDOW_TUNING.closingNearRadius),
     );
   }
-  return WINDOW_TUNING.pursuitFarStrength;
+  return WINDOW_TUNING.closingForceFar;
 }
 
 function getPursuitSlowdown() {
   if (mode !== 'shake' || butterflyState.capturePending || butterflyState.startleUntil > 0) return 0;
-  if (pursuitState.alignmentScore <= WINDOW_TUNING.pursuitAlignmentThreshold) return 0;
-  if (pursuitState.distanceToButterfly <= WINDOW_TUNING.pursuitNoAutoCaptureRadius) return 0;
-  if (pursuitState.distanceToButterfly >= WINDOW_TUNING.pursuitNearRadius) return 0;
+  if (pursuitState.closingScore <= WINDOW_TUNING.closingScoreThreshold) return 0;
+  if (pursuitState.distanceToButterfly <= WINDOW_TUNING.noAutoCaptureRadius) return 0;
+  if (pursuitState.distanceToButterfly >= WINDOW_TUNING.nearDampingRadius) return 0;
   const nearFactor = 1 - clamp(
-    (pursuitState.distanceToButterfly - WINDOW_TUNING.pursuitNoAutoCaptureRadius)
-      / Math.max(1, WINDOW_TUNING.pursuitNearRadius - WINDOW_TUNING.pursuitNoAutoCaptureRadius),
+    (pursuitState.distanceToButterfly - WINDOW_TUNING.noAutoCaptureRadius)
+      / Math.max(1, WINDOW_TUNING.nearDampingRadius - WINDOW_TUNING.noAutoCaptureRadius),
     0,
     1,
   );
-  return nearFactor * WINDOW_TUNING.pursuitSlowdownFactor * clamp(pursuitState.alignmentScore, 0, 1);
+  return nearFactor * WINDOW_TUNING.slowdownFactor * clamp(pursuitState.closingScore, 0, 1);
 }
 
 function projectButterflyToScreen(dt) {
@@ -857,18 +931,21 @@ function projectButterflyToScreen(dt) {
     frameY: frameCenter.y,
     windowOffsetX: cameraState.windowOffsetX,
     windowOffsetY: cameraState.windowOffsetY,
-    intentX: cameraState.intentX,
-    intentY: cameraState.intentY,
+    motionX: cameraState.motionX,
+    motionY: cameraState.motionY,
     tuning: WINDOW_TUNING,
   });
 
   pursuitState.distanceToButterfly = projection.distanceBefore;
-  pursuitState.alignmentScore = 0;
-  pursuitState.pursuitInfluence = 0;
-  pursuitState.nearZoneFactor = projection.distanceBefore < WINDOW_TUNING.pursuitNearRadius
+  pursuitState.butterflyVecX = projection.butterflyVecX;
+  pursuitState.butterflyVecY = projection.butterflyVecY;
+  pursuitState.closingScore = 0;
+  pursuitState.radialForce = 0;
+  pursuitState.tangentialLeak = 0;
+  pursuitState.nearZoneFactor = projection.distanceBefore < WINDOW_TUNING.closingNearRadius
     ? 1 - clamp(
-      (projection.distanceBefore - WINDOW_TUNING.pursuitNoAutoCaptureRadius)
-        / Math.max(1, WINDOW_TUNING.pursuitNearRadius - WINDOW_TUNING.pursuitNoAutoCaptureRadius),
+      (projection.distanceBefore - WINDOW_TUNING.noAutoCaptureRadius)
+        / Math.max(1, WINDOW_TUNING.closingNearRadius - WINDOW_TUNING.noAutoCaptureRadius),
       0,
       1,
     )
@@ -883,15 +960,16 @@ function projectButterflyToScreen(dt) {
     && !butterflyState.capturePending
     && butterflyState.startleUntil <= 0
     && projection.distanceBefore > 1
-    && projection.intentMag > WINDOW_TUNING.pursuitDeadZone
+    && projection.motionMagnitude > WINDOW_TUNING.motionDeadZone
   ) {
-    pursuitState.alignmentScore = projection.alignmentScore;
-    pursuitState.pursuitInfluence = projection.pursuitInfluence;
+    pursuitState.closingScore = projection.closingScore;
+    pursuitState.radialForce = projection.radialForce;
+    pursuitState.tangentialLeak = projection.tangentialLeak;
     desiredAssistX = projection.desiredAssistX;
     desiredAssistY = projection.desiredAssistY;
   }
 
-  const assistLerp = clamp(dt * WINDOW_TUNING.pursuitDamping, 0, 1);
+  const assistLerp = clamp(dt * WINDOW_TUNING.assistDamping, 0, 1);
   cameraState.assistOffsetX = lerp(cameraState.assistOffsetX, desiredAssistX, assistLerp);
   cameraState.assistOffsetY = lerp(cameraState.assistOffsetY, desiredAssistY, assistLerp);
 
@@ -1660,7 +1738,11 @@ async function setMode(nextMode) {
 
   mode = nextMode;
   panelPinnedOpen = false;
-  if (mode === 'shake' && Number.isFinite(cameraState.latestBeta) && Number.isFinite(cameraState.latestGamma)) {
+  if (
+    mode === 'shake'
+    && Number.isFinite(cameraState.latestBeta)
+    && (Number.isFinite(cameraState.latestAlpha) || Number.isFinite(cameraState.latestGamma))
+  ) {
     recenterObservationWindow();
   }
   swipeModeBtn.classList.toggle('active', mode === 'swipe');
@@ -1697,10 +1779,11 @@ window.addEventListener('touchend', () => { lastPointer = null; }, { passive: tr
 window.addEventListener('mouseup', () => { lastPointer = null; });
 
 window.addEventListener('deviceorientation', (event) => {
-  if (typeof event.beta !== 'number' || typeof event.gamma !== 'number') return;
+  if (typeof event.beta !== 'number') return;
+  if (typeof event.alpha !== 'number' && typeof event.gamma !== 'number') return;
   cameraState.latestAlpha = typeof event.alpha === 'number' ? event.alpha : null;
   cameraState.latestBeta = event.beta;
-  cameraState.latestGamma = event.gamma;
+  cameraState.latestGamma = typeof event.gamma === 'number' ? event.gamma : null;
   if (cameraState.needsCalibration) {
     recenterObservationWindow();
   } else {
