@@ -155,6 +155,51 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
 }
 
+.observe-debug {
+  position: absolute;
+  top: max(204px, calc(env(safe-area-inset-top) + 188px));
+  right: 14px;
+  width: min(320px, calc(100vw - 28px));
+  padding: 10px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(136, 215, 255, 0.18);
+  background: rgba(7, 11, 17, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.26);
+  pointer-events: none;
+  z-index: 13;
+}
+
+.observe-debug.is-alert {
+  border-color: rgba(255, 149, 126, 0.4);
+  box-shadow: 0 14px 34px rgba(255, 122, 92, 0.12);
+}
+
+.observe-debug-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(246, 244, 239, 0.6);
+}
+
+.observe-debug-content {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-family: "SF Mono", "Menlo", "Monaco", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(246, 244, 239, 0.9);
+}
+
+.observe-debug-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(154, 244, 197, 0.94);
+}
+
 .flight-card {
   position: absolute;
   top: max(94px, calc(env(safe-area-inset-top) + 78px));
@@ -879,6 +924,11 @@ body {
   .panel-mini-label {
     font-size: 12px;
   }
+
+  .observe-debug {
+    right: 12px;
+    width: min(300px, calc(100vw - 24px));
+  }
 }
 
 @media (max-height: 820px) {
@@ -904,6 +954,10 @@ body {
   .timing-hud {
     width: 124px;
     padding: 5px 6px 8px;
+  }
+
+  .observe-debug {
+    top: max(192px, calc(env(safe-area-inset-top) + 176px));
   }
 
   .bottom-panel {

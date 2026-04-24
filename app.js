@@ -33,6 +33,11 @@ const resultMeta = document.getElementById('resultMeta');
 const resultFlavor = document.getElementById('resultFlavor');
 const continueBtn = document.getElementById('continueBtn');
 const buildStamp = document.getElementById('buildStamp');
+const observeDebug = document.getElementById('observeDebug');
+const observeDebugContent = document.getElementById('observeDebugContent');
+const observeDebugHint = document.getElementById('observeDebugHint');
+
+const observeDebugEnabled = new URLSearchParams(window.location.search).get('observeDebug') === '1';
 
 const rigParts = {
   body: document.getElementById('partBody'),
@@ -66,6 +71,8 @@ const WINDOW_TUNING = {
   maxOffsetY: 170,
   orientationRangeGamma: 20,
   orientationRangeBeta: 18,
+  axisSignX: 1,
+  axisSignY: 1,
   pursuitDeadZone: 0.35,
   pursuitAlignmentThreshold: 0.12,
   pursuitResponse: 5.2,
@@ -311,6 +318,12 @@ function createCameraState() {
     assistOffsetY: 0,
     smoothedDeltaX: 0,
     smoothedDeltaY: 0,
+    facingMode: 'unknown',
+    cameraLabel: '',
+    isMirrored: false,
+    debugDistanceBefore: 0,
+    debugDistanceAfter: 0,
+    debugDistanceDelta: 0,
   };
 }
 
@@ -330,6 +343,8 @@ function createStartleState() {
     recentJitter: 0,
     lastMagnitude: 0,
     isStartled: false,
+    lastTriggerReason: '',
+    lastTriggerAt: 0,
   };
 }
 
@@ -355,6 +370,162 @@ function clamp(value, min, max) {
 
 function lerp(start, end, amount) {
   return start + (end - start) * amount;
+}
+
+const diagnosticsCore = window.ObserveDiagnosticsCore || {};
+
+const computeOrientationTargets = diagnosticsCore.computeOrientationTargets || function computeOrientationTargetsFallback({
+  latestBeta,
+  latestGamma,
+  baseBeta,
+  baseGamma,
+  tuning,
+  axisSignX = 1,
+  axisSignY = 1,
+  mirrorSignX = 1,
+}) {
+  const betaDelta = clamp(latestBeta - baseBeta, -tuning.orientationRangeBeta, tuning.orientationRangeBeta);
+  const gammaDelta = clamp(latestGamma - baseGamma, -tuning.orientationRangeGamma, tuning.orientationRangeGamma);
+  return {
+    betaDelta,
+    gammaDelta,
+    targetOffsetX: axisSignX * mirrorSignX * (gammaDelta / tuning.orientationRangeGamma) * tuning.maxOffsetX,
+    targetOffsetY: axisSignY * (betaDelta / tuning.orientationRangeBeta) * tuning.maxOffsetY,
+  };
+};
+
+const computeObservationProjection = diagnosticsCore.computeObservationProjection || function computeObservationProjectionFallback({
+  worldX,
+  worldY,
+  frameX,
+  frameY,
+  windowOffsetX,
+  windowOffsetY,
+  smoothedDeltaX,
+  smoothedDeltaY,
+  tuning,
+}) {
+  const baseScreenX = worldX - windowOffsetX;
+  const baseScreenY = worldY - windowOffsetY;
+  const dx = baseScreenX - frameX;
+  const dy = baseScreenY - frameY;
+  const distanceBefore = Math.hypot(dx, dy);
+  const deltaMag = Math.hypot(smoothedDeltaX, smoothedDeltaY);
+
+  let alignmentScore = 0;
+  let pursuitInfluence = 0;
+  let desiredAssistX = 0;
+  let desiredAssistY = 0;
+
+  if (distanceBefore > 1 && deltaMag > tuning.pursuitDeadZone) {
+    const dirX = dx / distanceBefore;
+    const dirY = dy / distanceBefore;
+    const intentX = smoothedDeltaX / deltaMag;
+    const intentY = smoothedDeltaY / deltaMag;
+    alignmentScore = dirX * intentX + dirY * intentY;
+
+    if (alignmentScore > tuning.pursuitAlignmentThreshold) {
+      const strength = getPursuitStrength(distanceBefore);
+      const assistMagnitude = clamp(
+        (alignmentScore - tuning.pursuitAlignmentThreshold)
+          / (1 - tuning.pursuitAlignmentThreshold)
+          * deltaMag
+          * tuning.pursuitResponse
+          * strength,
+        0,
+        tuning.pursuitAssistMaxOffset,
+      );
+      pursuitInfluence = assistMagnitude;
+      desiredAssistX = dirX * assistMagnitude;
+      desiredAssistY = dirY * assistMagnitude;
+    }
+  }
+
+  return {
+    baseScreenX,
+    baseScreenY,
+    dx,
+    dy,
+    distanceBefore,
+    deltaMag,
+    alignmentScore,
+    pursuitInfluence,
+    desiredAssistX,
+    desiredAssistY,
+  };
+};
+
+function inferFacingMode(rawFacingMode, label = '') {
+  if (rawFacingMode === 'environment' || rawFacingMode === 'user') return rawFacingMode;
+  const normalized = label.toLowerCase();
+  if (/front|facetime|user/.test(normalized)) return 'user';
+  if (/back|rear|environment/.test(normalized)) return 'environment';
+  return 'unknown';
+}
+
+function updateCameraTrackInfo(track) {
+  const settings = track?.getSettings?.() || {};
+  const cameraLabel = track?.label || '';
+  const facingMode = inferFacingMode(settings.facingMode, cameraLabel);
+  cameraState.facingMode = facingMode;
+  cameraState.cameraLabel = cameraLabel;
+  cameraState.isMirrored = facingMode === 'user';
+}
+
+function formatDebugNumber(value, digits = 1) {
+  return Number.isFinite(value) ? value.toFixed(digits) : '--';
+}
+
+function getObserveDebugHint() {
+  if (!running) return '等待开始';
+  if (!cameraReady) return '等待相机';
+  if (mode !== 'shake') return '当前未启用甩动主玩法';
+  if (cameraState.facingMode === 'user') return '摄像头异常：当前拿到的是前置摄像头';
+  if (cameraState.facingMode !== 'environment' && cameraState.cameraLabel) return '摄像头异常：后摄未被确认';
+  if (startleState.isStartled) return '疑似被惊走';
+  if (!butterflyState.inView) return '更像看丢了它';
+
+  const moving = Math.hypot(cameraState.smoothedDeltaX, cameraState.smoothedDeltaY) > WINDOW_TUNING.pursuitDeadZone;
+  if (!moving) return '等待追逐输入';
+
+  if (
+    pursuitState.alignmentScore > WINDOW_TUNING.pursuitAlignmentThreshold
+    && cameraState.debugDistanceDelta < -0.45
+  ) return '追近有效';
+
+  if (pursuitState.alignmentScore < -WINDOW_TUNING.pursuitAlignmentThreshold) return '方向可能反了';
+
+  if (
+    pursuitState.alignmentScore > WINDOW_TUNING.pursuitAlignmentThreshold
+    && cameraState.debugDistanceDelta >= -0.45
+  ) return '追近感偏弱';
+
+  return '观察中';
+}
+
+function renderObserveDebugUi() {
+  if (!observeDebugEnabled || !observeDebug || !observeDebugContent || !observeDebugHint) return;
+
+  observeDebug.classList.remove('hidden');
+
+  const lines = [
+    `cam      ${cameraState.facingMode}${cameraState.isMirrored ? ' / mirrored' : ''}`,
+    `label    ${cameraState.cameraLabel || '--'}`,
+    `orient   beta ${formatDebugNumber(cameraState.latestBeta)}  gamma ${formatDebugNumber(cameraState.latestGamma)}`,
+    `base     beta ${formatDebugNumber(cameraState.baseBeta)}  gamma ${formatDebugNumber(cameraState.baseGamma)}`,
+    `target   x ${formatDebugNumber(cameraState.targetOffsetX)}  y ${formatDebugNumber(cameraState.targetOffsetY)}`,
+    `window   x ${formatDebugNumber(cameraState.windowOffsetX)}  y ${formatDebugNumber(cameraState.windowOffsetY)}`,
+    `delta    x ${formatDebugNumber(cameraState.smoothedDeltaX, 2)}  y ${formatDebugNumber(cameraState.smoothedDeltaY, 2)}`,
+    `dist     before ${formatDebugNumber(cameraState.debugDistanceBefore)}  after ${formatDebugNumber(cameraState.debugDistanceAfter)}  d ${formatDebugNumber(cameraState.debugDistanceDelta, 2)}`,
+    `pursuit  align ${formatDebugNumber(pursuitState.alignmentScore, 2)}  inf ${formatDebugNumber(pursuitState.pursuitInfluence, 2)}`,
+    `startle  on ${startleState.isStartled ? 'yes' : 'no'}  burst ${formatDebugNumber(startleState.recentMotionBurst, 2)}  jitter ${formatDebugNumber(startleState.recentJitter, 2)}`,
+    `reason   ${startleState.lastTriggerReason || '--'}  at ${startleState.lastTriggerAt ? formatDebugNumber(startleState.lastTriggerAt, 0) : '--'}`,
+  ];
+
+  observeDebugContent.textContent = lines.join('\n');
+  const hint = getObserveDebugHint();
+  observeDebugHint.textContent = hint;
+  observeDebug.classList.toggle('is-alert', /异常|反了|惊走/.test(hint));
 }
 
 function clearRevealTimer() {
@@ -399,6 +570,7 @@ async function startCamera() {
     video: { facingMode: { ideal: 'environment' } },
     audio: false,
   });
+  updateCameraTrackInfo(stream.getVideoTracks()[0]);
   video.srcObject = stream;
   await video.play();
   cameraReady = true;
@@ -493,10 +665,18 @@ function recenterObservationWindow() {
 
 function refreshObservationTargets() {
   if (!cameraState.orientationReady) return;
-  const betaDelta = clamp(cameraState.latestBeta - cameraState.baseBeta, -WINDOW_TUNING.orientationRangeBeta, WINDOW_TUNING.orientationRangeBeta);
-  const gammaDelta = clamp(cameraState.latestGamma - cameraState.baseGamma, -WINDOW_TUNING.orientationRangeGamma, WINDOW_TUNING.orientationRangeGamma);
-  cameraState.targetOffsetX = (gammaDelta / WINDOW_TUNING.orientationRangeGamma) * WINDOW_TUNING.maxOffsetX;
-  cameraState.targetOffsetY = (betaDelta / WINDOW_TUNING.orientationRangeBeta) * WINDOW_TUNING.maxOffsetY;
+  const orientation = computeOrientationTargets({
+    latestBeta: cameraState.latestBeta,
+    latestGamma: cameraState.latestGamma,
+    baseBeta: cameraState.baseBeta,
+    baseGamma: cameraState.baseGamma,
+    tuning: WINDOW_TUNING,
+    axisSignX: WINDOW_TUNING.axisSignX,
+    axisSignY: WINDOW_TUNING.axisSignY,
+    mirrorSignX: cameraState.isMirrored ? -1 : 1,
+  });
+  cameraState.targetOffsetX = orientation.targetOffsetX;
+  cameraState.targetOffsetY = orientation.targetOffsetY;
 }
 
 function updateObservationWindow(dt) {
@@ -566,19 +746,24 @@ function getPursuitSlowdown() {
 
 function projectButterflyToScreen(dt) {
   const frameCenter = getCaptureFrameCenter();
-  const baseScreenX = butterflyState.worldX - cameraState.windowOffsetX;
-  const baseScreenY = butterflyState.worldY - cameraState.windowOffsetY;
-  const dx = baseScreenX - frameCenter.x;
-  const dy = baseScreenY - frameCenter.y;
-  const distance = Math.hypot(dx, dy);
-  const deltaMag = Math.hypot(cameraState.smoothedDeltaX, cameraState.smoothedDeltaY);
+  const projection = computeObservationProjection({
+    worldX: butterflyState.worldX,
+    worldY: butterflyState.worldY,
+    frameX: frameCenter.x,
+    frameY: frameCenter.y,
+    windowOffsetX: cameraState.windowOffsetX,
+    windowOffsetY: cameraState.windowOffsetY,
+    smoothedDeltaX: cameraState.smoothedDeltaX,
+    smoothedDeltaY: cameraState.smoothedDeltaY,
+    tuning: WINDOW_TUNING,
+  });
 
-  pursuitState.distanceToButterfly = distance;
+  pursuitState.distanceToButterfly = projection.distanceBefore;
   pursuitState.alignmentScore = 0;
   pursuitState.pursuitInfluence = 0;
-  pursuitState.nearZoneFactor = distance < WINDOW_TUNING.pursuitNearRadius
+  pursuitState.nearZoneFactor = projection.distanceBefore < WINDOW_TUNING.pursuitNearRadius
     ? 1 - clamp(
-      (distance - WINDOW_TUNING.pursuitNoAutoCaptureRadius)
+      (projection.distanceBefore - WINDOW_TUNING.pursuitNoAutoCaptureRadius)
         / Math.max(1, WINDOW_TUNING.pursuitNearRadius - WINDOW_TUNING.pursuitNoAutoCaptureRadius),
       0,
       1,
@@ -593,31 +778,13 @@ function projectButterflyToScreen(dt) {
     && cameraState.orientationReady
     && !butterflyState.capturePending
     && butterflyState.startleUntil <= 0
-    && distance > 1
-    && deltaMag > WINDOW_TUNING.pursuitDeadZone
+    && projection.distanceBefore > 1
+    && projection.deltaMag > WINDOW_TUNING.pursuitDeadZone
   ) {
-    const dirX = dx / distance;
-    const dirY = dy / distance;
-    const intentX = cameraState.smoothedDeltaX / deltaMag;
-    const intentY = cameraState.smoothedDeltaY / deltaMag;
-    const alignment = dirX * intentX + dirY * intentY;
-    pursuitState.alignmentScore = alignment;
-
-    if (alignment > WINDOW_TUNING.pursuitAlignmentThreshold) {
-      const strength = getPursuitStrength(distance);
-      const assistMagnitude = clamp(
-        (alignment - WINDOW_TUNING.pursuitAlignmentThreshold)
-          / (1 - WINDOW_TUNING.pursuitAlignmentThreshold)
-          * deltaMag
-          * WINDOW_TUNING.pursuitResponse
-          * strength,
-        0,
-        WINDOW_TUNING.pursuitAssistMaxOffset,
-      );
-      pursuitState.pursuitInfluence = assistMagnitude;
-      desiredAssistX = dirX * assistMagnitude;
-      desiredAssistY = dirY * assistMagnitude;
-    }
+    pursuitState.alignmentScore = projection.alignmentScore;
+    pursuitState.pursuitInfluence = projection.pursuitInfluence;
+    desiredAssistX = projection.desiredAssistX;
+    desiredAssistY = projection.desiredAssistY;
   }
 
   const assistLerp = clamp(dt * WINDOW_TUNING.pursuitDamping, 0, 1);
@@ -634,6 +801,13 @@ function projectButterflyToScreen(dt) {
     && butterflyState.screenX < window.innerWidth + FLIGHT_TUNING.offscreenAllowance
     && butterflyState.screenY > -FLIGHT_TUNING.offscreenAllowance
     && butterflyState.screenY < window.innerHeight + FLIGHT_TUNING.offscreenAllowance;
+
+  cameraState.debugDistanceBefore = projection.distanceBefore;
+  cameraState.debugDistanceAfter = Math.hypot(
+    butterflyState.screenX - frameCenter.x,
+    butterflyState.screenY - frameCenter.y,
+  );
+  cameraState.debugDistanceDelta = cameraState.debugDistanceAfter - cameraState.debugDistanceBefore;
 }
 
 function getTimingMetaCopy() {
@@ -695,6 +869,7 @@ function renderTimingUi() {
   }
   updateSpecimenCard();
   renderPanelUi();
+  renderObserveDebugUi();
 }
 
 function updateTiming(dt) {
@@ -1189,7 +1364,7 @@ function segmentDistanceToPoint(ax, ay, bx, by, px, py) {
   return Math.hypot(px - nearestX, py - nearestY);
 }
 
-function triggerStartledEscape(originX, originY) {
+function triggerStartledEscape(originX, originY, reason = 'generic') {
   if (!currentButterfly || !butterflyState.alive || butterflyState.capturePending || butterflyState.nearMissCooldown > 0) return;
 
   const awayX = butterflyState.screenX - originX;
@@ -1201,6 +1376,8 @@ function triggerStartledEscape(originX, originY) {
   butterflyState.targetHeading = Math.atan2(awayY + rand(-28, 28), awayX + rand(-28, 28));
   butterflyState.targetSpeed = currentButterfly.motion.baseSpeed + currentButterfly.motion.speedJitter * 1.45;
   startleState.isStartled = true;
+  startleState.lastTriggerReason = reason;
+  startleState.lastTriggerAt = performance.now();
   setMotionState(MOTION_STATES.STARTLED_ESCAPE);
   butterfly.classList.add('miss');
   setTimeout(() => butterfly.classList.remove('miss'), 280);
@@ -1315,7 +1492,7 @@ function onPointerMove(clientX, clientY) {
       && trackDistance <= butterflyState.captureRadius * 1.7
       && trackDistance > butterflyState.captureRadius
     ) {
-      triggerStartledEscape(clientX, clientY);
+      triggerStartledEscape(clientX, clientY, 'swipe_near_miss');
     }
   }
 
@@ -1456,13 +1633,13 @@ window.addEventListener('devicemotion', (event) => {
       handleCaptureFail('frame_miss');
       if (shouldStartle) {
         const frame = getCaptureFrameMetrics();
-        triggerStartledEscape(frame.centerX, frame.centerY);
+        triggerStartledEscape(frame.centerX, frame.centerY, 'shake_frame_miss');
       }
     } else {
       handleCaptureFail('timing_miss');
       if (shouldStartle) {
         const frame = getCaptureFrameMetrics();
-        triggerStartledEscape(frame.centerX, frame.centerY);
+        triggerStartledEscape(frame.centerX, frame.centerY, 'shake_timing_miss');
       }
     }
 
@@ -1471,7 +1648,7 @@ window.addEventListener('devicemotion', (event) => {
     }, CAPTURE_TUNING.shakeCooldownMs);
   } else if (shouldStartle) {
     const frame = getCaptureFrameMetrics();
-    triggerStartledEscape(frame.centerX, frame.centerY);
+    triggerStartledEscape(frame.centerX, frame.centerY, 'motion_burst');
     showToast('动作太大，它被惊动了');
     setStatus('动作放轻一点，稳住再继续逼近');
   }
