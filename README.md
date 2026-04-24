@@ -76,7 +76,8 @@
 - `timing` 不再作为底部独立大面板，而是贴在捕获框下方，强调它和“入框”属于同一捕获动作
 - 当前 `timing` 条已经调成低遮挡、轻薄半透明，尽量不干扰对蝴蝶轨迹的预判
 - 进入主玩法后，底部控制区会自动收起为迷你条；点击后可再次展开
-- 页面会显示一个低干扰的 build 标记，方便 iPhone Safari 上区分缓存和当前测试版本
+- 页面会显示一个低干扰的稳定 build 标签，方便 iPhone Safari 上区分缓存和当前测试版本
+- 页面不直接显示 commit hash；真实 commit 与 build 标签的对应关系统一记录在 [todo.md](/Users/sylar/Desktop/projects/ifafa/todo.md) 的 `Change Log`
 - 滑动保留为备用兜底，不再是主玩法
 - 当前主玩法已切到“观察窗 + 追近 + 入框 + timing + 甩动”
 - 当前项目默认使用 `sliced rig`：把单张真实 PNG 切成 body / 前翅 / 后翅 5 层来驱动动作

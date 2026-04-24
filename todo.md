@@ -5,7 +5,7 @@
 - 当前阶段：Phase 1 - 稳定观察窗版 Demo
 - 当前目标：以“逼近感成立 → 不难抓到劝退 → 稳手更好抓”为优先级，稳定“观察窗 + 追近 + 入框 + timing + 甩动”闭环，并完成下一轮 iPhone Safari 实测
 - 当前主线说明：`main` 承载单机 Demo 主线；先稳定当前观察窗实现，再验证、再调参、再扩展
-- 最近基线 commit：`8018b29` `Tune timing HUD visibility and capture frame`
+- 最近基线 commit：`3f0ad7d` `Advance observation-window demo baseline`
 - 最近实机测试日期：`2026-04-24`（iPhone 16 Pro / Safari，基于最新截图反馈）
 - 当前设备目标：`iPhone Safari` 主目标，桌面浏览器仅作调试辅助
 - 当前工作区备注：本地存在未提交的“观察窗 + 追近 + 稳手惊走”改动，需先做稳定性验证后再推进下一系统
@@ -16,6 +16,7 @@
 - `mvp-note-md/` 保留为历史来源目录，不再继续写入当前执行任务
 - 默认维护人：`Codex`
 - `KO` 可在特殊情况下直接浏览、补充、修改 `todo.md`；这视为正式协作输入，不视为冲突
+- 当前线程视为本项目的专属 `todo` 对话入口；后续 `KO` 在这里给出的需求、备忘、体验反馈，默认都应整理进本文件对应区块
 - 所有新计划先落本文件，再决定是否同步到 [README.md](/Users/sylar/Desktop/projects/ifafa/README.md)
 - `Now`、`Next`、`Backlog`、`Imported Legacy` 统一使用审计字段与实现归属字段：
   `填写人`、`填写时间`、`最后修改人`、`最后修改时间`、`实现于计划`、`实现于版本`、`实现于 Commit`、`完成时间`
@@ -37,7 +38,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | NOW-001 | 稳定观察窗坐标体系与追逐辅助 | engineering | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 19:15 CST | TBD | TBD |  |  | `node --check app.js` 已通过；待 iPhone 复测“朝它移动是否真有帮助” | 先让体验不违和：保证追近感成立，再谈难度和沉浸感 |
 | NOW-002 | iPhone Safari 验证“追近 / 看丢 / 惊走”三段体验 | ux | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 2 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 19:15 CST | TBD | TBD |  |  | 待下一轮 GitHub Pages 实测；本轮只收 5 类用户体感反馈 | 成功标准：追它有帮助、不会太难、追错更像看丢、动作轻一点更好抓、整体更像在追蝴蝶 |
-| NOW-003 | 给页面加入可见 build / version 标记 | process | active | P1 | 2026-04-24 | user-feedback | GitHub Pages 缓存混淆反馈 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 19:02 CST | TBD | `observe-v1` |  |  | 本地已加入 `build observe-v1 · 8018b29+local`；待 push 后用 iPhone 复核 | 用于实机测试时确认缓存与 build 对应关系 |
+| NOW-003 | 给页面加入可见 build / version 标记 | process | active | P1 | 2026-04-24 | user-feedback | GitHub Pages 缓存混淆反馈 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 19:41 CST | Build 标记一致性修复计划 | `observe-v1` |  |  | 页面已改为由 `BUILD_INFO` 渲染 `build observe-v1 · main`；真实 commit 改由 `Change Log` 追溯 | 用于实机测试时确认缓存与 build 对应关系，避免 UI 文案与真实 commit 再次过期 |
 
 ## Next
 
@@ -85,8 +86,9 @@
 - 2026-04-24 17:45 CST · Codex：`codex/捕获趣味性v` 只读参考，不作为合并来源。
 - 2026-04-24 17:45 CST · Codex：需要尽快把可见 build / version 标记补到页面中，降低 GitHub Pages 缓存混淆成本。
 - 2026-04-24 17:45 CST · Codex：当前“手稳一些更好抓”的体验仍需实机收敛，重点观察 startle 阈值是否过敏或过钝。
-- 2026-04-24 19:02 CST · Codex：页面已加入 `build observe-v1 · 8018b29+local` 标记；下一次 push 后要立刻用 iPhone 确认缓存命中的是这版。
+- 2026-04-24 19:02 CST · Codex：页面曾使用 `build observe-v1 · 8018b29+local` 的写死标记；该策略已废弃，后续统一改为稳定 build 标签 + `Change Log` 映射 commit。
 - 2026-04-24 19:15 CST · Codex：后续每轮只要求 `KO` 提供用户级体感反馈，例如“追它有帮助 / 没帮助”“太难 / 还行 / 太容易”“像看丢了 / 像逻辑怪”。
+- 2026-04-24 19:40 CST · Codex：本线程已明确作为项目专属 `todo` 对话入口；后续零散需求、备忘、用户体感都可以直接丢在这里，由我整理入账。
 
 ## Decision Log
 
@@ -102,6 +104,8 @@
 - 2026-04-24 17:45 CST · Codex：正式任务表新增 `实现于计划 / 实现于版本 / 实现于 Commit / 完成时间` 四个实现归属字段。
 - 2026-04-24 19:02 CST · Codex：观察窗版 Demo 先按“收口实现 → 加版本标记 → GitHub Pages 实测 → 只调参数”的顺序推进，不在本轮打开新系统。
 - 2026-04-24 19:15 CST · Codex：后续体验优化按 `逼近感成立` → `可抓性不过低` → `稳手沉浸感增强` 的结果优先级推进；`KO` 不承担技术方案判断，只判断用户感受。
+- 2026-04-24 19:40 CST · Codex：当前对话正式指定为 ifafa 项目的专属需求 / 备忘入口；后续以这里的输入为 `todo.md` 更新触发源之一。
+- 2026-04-24 19:41 CST · Codex：页面上的 build 标记不再显示写死的 commit hash；UI 只显示稳定 build 标签，真实 commit 统一在 `todo.md` 中追溯。
 
 ## Change Log
 
@@ -111,3 +115,6 @@
 - 2026-04-24 17:45 CST · Codex：新增 `Done Summary`，并将关键历史里程碑补齐实现归属字段。
 - 2026-04-24 19:02 CST · Codex：回到观察窗版原有计划推进；本地补入低干扰 build 标记，并把 NOW-003 提前为活跃任务。
 - 2026-04-24 19:15 CST · Codex：将当前主线改成“结果导向协作”模式：技术判断由 Codex 兜底，KO 只需按用户体感给反馈。
+- 2026-04-24 19:40 CST · Codex：补记当前线程用途，明确这里作为项目专属 `todo` 需求与备忘入口，后续直接承接零散输入并整理入总账。
+- 2026-04-24 19:41 CST · Codex：build 标记策略改为“页面只显示稳定 build 标签，真实 commit 映射放在 `todo.md`”；不再把短 hash 写进 UI。
+- 2026-04-24 19:41 CST · Codex：当前 `observe-v1` build 标签对应已上线基线 commit `3f0ad7d`（`Advance observation-window demo baseline`）；后续继续沿用“UI 显示标签，日志追溯 commit”的规则。

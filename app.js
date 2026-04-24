@@ -32,6 +32,7 @@ const resultTitle = document.getElementById('resultTitle');
 const resultMeta = document.getElementById('resultMeta');
 const resultFlavor = document.getElementById('resultFlavor');
 const continueBtn = document.getElementById('continueBtn');
+const buildStamp = document.getElementById('buildStamp');
 
 const rigParts = {
   body: document.getElementById('partBody'),
@@ -96,6 +97,11 @@ const CAPTURE_TUNING = {
   cursorSpeed: 68,
   shakeCooldownMs: 900,
   shakeCaptureThreshold: 22,
+};
+
+const BUILD_INFO = {
+  label: 'observe-v1',
+  channel: 'main',
 };
 
 function createSliceBoxes(frontX, frontY, frontW, frontH, backX, backY, backW, backH, bodyX, bodyY, bodyW, bodyH) {
@@ -368,6 +374,13 @@ function resize() {
 
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+function renderBuildStamp() {
+  if (!buildStamp) return;
+  buildStamp.textContent = BUILD_INFO.channel
+    ? `build ${BUILD_INFO.label} · ${BUILD_INFO.channel}`
+    : `build ${BUILD_INFO.label}`;
 }
 
 function showToast(message, duration = 1900) {
@@ -1485,6 +1498,7 @@ panelCollapseBtn.addEventListener('click', () => {
 });
 
 setMode('swipe');
+renderBuildStamp();
 updateSpecimenCard();
 placeButterfly();
 renderTimingUi();
