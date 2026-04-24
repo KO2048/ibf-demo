@@ -22,6 +22,7 @@ body {
   margin: 0;
   padding: 0;
   width: 100%;
+  min-height: 100%;
   height: 100%;
   background: radial-gradient(circle at top, #1a2330 0%, #090f15 60%, #05070b 100%);
   color: var(--text);
@@ -37,6 +38,7 @@ body {
   position: relative;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: #000;
   isolation: isolate;
@@ -74,10 +76,9 @@ body {
 .topbar,
 .flight-card,
 .bottom-panel,
-.timing-hud,
 .toast,
 .result-card,
-#captureFrame {
+#captureCluster {
   z-index: 12;
 }
 
@@ -395,19 +396,27 @@ body {
   transform: rotate(22deg);
 }
 
-.capture-frame {
+.capture-cluster {
   position: absolute;
   left: 50%;
-  top: 36%;
+  top: 34.5%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.capture-frame {
+  position: relative;
   width: 132px;
   height: 132px;
-  transform: translate(-50%, -50%);
   border-radius: 26px;
   border: 1.5px solid rgba(255, 255, 255, 0.22);
   box-shadow:
     0 0 0 8px rgba(255, 255, 255, 0.04),
     0 0 30px rgba(136, 215, 255, 0.14);
-  pointer-events: none;
   overflow: hidden;
 }
 
@@ -481,49 +490,39 @@ body {
   border-color: rgba(154, 244, 197, 0.96);
 }
 
+.capture-cluster.is-passive {
+  opacity: 0.6;
+}
+
 .timing-hud {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 180px);
-  border-radius: 22px;
-  padding: 14px 16px;
+  position: relative;
+  width: 122px;
+  border-radius: 16px;
+  padding: 8px 8px 10px;
   background: rgba(7, 11, 17, 0.7);
   border: 1px solid var(--line);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.2);
 }
 
 .timing-hud.is-shake-active {
   border-color: rgba(136, 215, 255, 0.22);
 }
 
-.timing-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-}
-
-.timing-title {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(246, 244, 239, 0.8);
-}
-
 .timing-meta {
-  font-size: 12px;
+  min-height: 15px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   color: var(--muted);
-  text-align: right;
+  text-align: center;
 }
 
 .timing-bar {
   position: relative;
-  margin-top: 12px;
-  height: 18px;
+  margin-top: 6px;
+  height: 12px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.06);
@@ -542,23 +541,110 @@ body {
 
 .timing-cursor {
   position: absolute;
-  top: calc(100% + 7px);
+  top: calc(100% + 4px);
   width: 0;
   height: 0;
-  border-left: 12px solid transparent;
-  border-right: 12px solid transparent;
-  border-bottom: 18px solid rgba(79, 178, 255, 0.94);
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 12px solid rgba(79, 178, 255, 0.94);
   transform: translateX(-50%);
   filter: drop-shadow(0 4px 10px rgba(79, 178, 255, 0.28));
 }
 
+.timing-hud.is-ready {
+  border-color: rgba(154, 244, 197, 0.5);
+  box-shadow: 0 10px 24px rgba(154, 244, 197, 0.16);
+}
+
+.timing-hud.is-ready .timing-meta {
+  color: rgba(154, 244, 197, 0.96);
+}
+
+.timing-hud.is-miss {
+  border-color: rgba(255, 110, 76, 0.6);
+  box-shadow: 0 10px 24px rgba(255, 110, 76, 0.14);
+}
+
 .bottom-panel {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: max(14px, env(safe-area-inset-bottom));
-  border-radius: 24px;
-  padding: 16px;
+  left: 12px;
+  right: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  border-radius: 20px;
+  padding: 8px;
+}
+
+.bottom-panel.is-collapsed {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.bottom-panel-expanded {
+  display: grid;
+  gap: 8px;
+}
+
+.panel-mini {
+  display: block;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.panel-caption {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(246, 244, 239, 0.58);
+}
+
+.panel-toggle,
+.panel-collapse {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.panel-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.2);
+}
+
+.panel-mini-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.panel-toggle-hint,
+.panel-collapse {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.panel-collapse {
+  padding: 6px 8px;
 }
 
 .primary-btn,
@@ -566,9 +652,9 @@ body {
 .mode-btn {
   appearance: none;
   border: none;
-  border-radius: 16px;
-  padding: 14px 16px;
-  font-size: 16px;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -588,8 +674,8 @@ body {
 .modes {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .mode-btn {
@@ -603,12 +689,12 @@ body {
 }
 
 .hint {
-  margin-top: 12px;
+  margin-top: 10px;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 11px;
+  line-height: 1.38;
 }
 
 .toast {
@@ -769,7 +855,43 @@ body {
     font-size: 26px;
   }
 
-  .timing-meta {
-    max-width: 58%;
+  .panel-mini-label {
+    font-size: 12px;
+  }
+}
+
+@media (max-height: 820px) {
+  .flight-card {
+    top: max(88px, calc(env(safe-area-inset-top) + 72px));
+    width: min(256px, calc(100vw - 28px));
+    padding: 14px 16px;
+  }
+
+  .specimen-name {
+    font-size: 20px;
+  }
+
+  .capture-cluster {
+    top: 33.5%;
+  }
+
+  .capture-frame {
+    width: 124px;
+    height: 124px;
+  }
+
+  .timing-hud {
+    width: 116px;
+    padding: 7px 8px 9px;
+  }
+
+  .bottom-panel {
+    padding: 7px;
+  }
+
+  .primary-btn,
+  .secondary-btn,
+  .mode-btn {
+    padding: 11px 12px;
   }
 }

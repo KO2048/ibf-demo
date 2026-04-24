@@ -12,12 +12,19 @@ const specimenMeta = document.getElementById('specimenMeta');
 const startBtn = document.getElementById('startBtn');
 const swipeModeBtn = document.getElementById('swipeModeBtn');
 const shakeModeBtn = document.getElementById('shakeModeBtn');
+const captureCluster = document.getElementById('captureCluster');
 const captureFrame = document.getElementById('captureFrame');
 const timingHud = document.getElementById('timingHud');
 const timingBar = document.getElementById('timingBar');
 const timingWindow = document.getElementById('timingWindow');
 const timingCursor = document.getElementById('timingCursor');
 const timingMeta = document.getElementById('timingMeta');
+const bottomPanel = document.getElementById('bottomPanel');
+const bottomPanelExpanded = document.getElementById('bottomPanelExpanded');
+const panelMini = document.getElementById('panelMini');
+const panelExpandBtn = document.getElementById('panelExpandBtn');
+const panelMiniLabel = document.getElementById('panelMiniLabel');
+const panelCollapseBtn = document.getElementById('panelCollapseBtn');
 const toast = document.getElementById('toast');
 const resultCard = document.getElementById('resultCard');
 const resultBadge = document.getElementById('resultBadge');
@@ -193,6 +200,8 @@ let lastPointer = null;
 let lastFrameAt = 0;
 let currentButterfly = null;
 let revealTimer = null;
+let panelCollapsed = false;
+let panelPinnedOpen = false;
 let butterflyState = createEmptyButterflyState();
 let timingState = createTimingState();
 
@@ -364,27 +373,60 @@ function configureTimingForVariant(variant) {
 
 function getTimingMetaCopy() {
   if (!running || !currentButterfly) return '等待开始';
-  if (mode !== 'shake') return '滑动仍可作为备用路径';
+  if (mode !== 'shake') return '滑动备用';
   const inside = isButterflyInsideCaptureFrame();
   const timingReady = isTimingHit();
-  if (inside && timingReady) return '窗口已对齐，立即甩动';
-  if (inside) return '目标已入框，等待 X 落入 MN';
-  return '先把蝴蝶引入中央画框';
+  if (inside && timingReady) return '可出手';
+  if (inside) return '等 X 入窗';
+  return '先入框';
+}
+
+function getPanelMiniCopy() {
+  if (!running || !cameraReady) return '点击开始体验';
+  if (mode === 'swipe') return '备用：滑动';
+  return `主玩法：甩动 · ${getTimingMetaCopy()}`;
+}
+
+function syncPanelCollapse() {
+  const canCollapse = running && cameraReady && mode === 'shake';
+  panelCollapsed = canCollapse && !panelPinnedOpen;
+}
+
+function renderPanelUi() {
+  syncPanelCollapse();
+  bottomPanel.classList.toggle('is-collapsed', panelCollapsed);
+  panelMini.classList.toggle('hidden', !panelCollapsed);
+  bottomPanelExpanded.classList.toggle('hidden', panelCollapsed);
+  panelCollapseBtn.classList.toggle('hidden', !running);
+  panelMiniLabel.textContent = getPanelMiniCopy();
+  panelExpandBtn.setAttribute('aria-expanded', panelCollapsed ? 'false' : 'true');
+}
+
+function pulseTimingMiss() {
+  timingHud.classList.remove('is-miss');
+  void timingHud.offsetWidth;
+  timingHud.classList.add('is-miss');
+  clearTimeout(pulseTimingMiss.timer);
+  pulseTimingMiss.timer = setTimeout(() => timingHud.classList.remove('is-miss'), 240);
 }
 
 function renderTimingUi() {
-  captureFrame.classList.toggle('hidden', !running);
-  timingHud.classList.toggle('hidden', !running);
+  captureCluster.classList.toggle('hidden', !running);
+  captureCluster.classList.toggle('is-passive', mode !== 'shake');
+  timingHud.classList.toggle('hidden', !running || mode !== 'shake');
   timingWindow.style.left = `${timingState.zoneStart}%`;
   timingWindow.style.width = `${timingState.zoneEnd - timingState.zoneStart}%`;
   timingCursor.style.left = `${timingState.cursorPosition}%`;
   timingMeta.textContent = getTimingMetaCopy();
-  captureFrame.classList.toggle('is-ready', mode === 'shake' && isButterflyInsideCaptureFrame() && isTimingHit());
+  const ready = mode === 'shake' && isButterflyInsideCaptureFrame() && isTimingHit();
+  captureFrame.classList.toggle('is-ready', ready);
   captureFrame.classList.toggle('is-active', running && mode === 'shake');
   timingHud.classList.toggle('is-shake-active', running && mode === 'shake');
+  timingHud.classList.toggle('is-ready', ready);
   if (!running || !currentButterfly) {
-    timingMeta.textContent = mode === 'swipe' ? '滑动备用已启用' : '等待蝴蝶进入当前轮次';
+    timingMeta.textContent = mode === 'swipe' ? '滑动备用' : '等待目标';
   }
+  renderPanelUi();
 }
 
 function updateTiming(dt) {
@@ -917,6 +959,7 @@ function handleCaptureFail(reason = 'miss') {
 
   if (butterflyState.alive && !butterflyState.capturePending && reason !== 'miss') {
     const frame = getCaptureFrameMetrics();
+    if (mode === 'shake') pulseTimingMiss();
     triggerStartledEscape(frame.centerX, frame.centerY);
   }
 }
@@ -1010,6 +1053,7 @@ async function startExperience() {
     setStatus('正在打开相机');
     await startCamera();
     running = true;
+    panelPinnedOpen = false;
     startBtn.textContent = '重新召唤蝴蝶';
     respawnButterfly();
     showToast('相机已启动。主玩法是入框 + timing + 甩动，滑动仍可作为备用');
@@ -1053,6 +1097,7 @@ async function setMode(nextMode) {
   }
 
   mode = nextMode;
+  panelPinnedOpen = false;
   swipeModeBtn.classList.toggle('active', mode === 'swipe');
   shakeModeBtn.classList.toggle('active', mode === 'shake');
 
@@ -1116,8 +1161,19 @@ swipeModeBtn.addEventListener('click', () => setMode('swipe'));
 shakeModeBtn.addEventListener('click', () => setMode('shake'));
 continueBtn.addEventListener('click', () => {
   resultCard.classList.add('hidden');
+  panelPinnedOpen = false;
   respawnButterfly();
   setStatus(mode === 'swipe' ? '新的目标已出现，滑动可用作备用' : '新的目标已出现，将其引入画框再看准 timing');
+});
+
+panelExpandBtn.addEventListener('click', () => {
+  panelPinnedOpen = true;
+  renderPanelUi();
+});
+
+panelCollapseBtn.addEventListener('click', () => {
+  panelPinnedOpen = false;
+  renderPanelUi();
 });
 
 setMode('swipe');
