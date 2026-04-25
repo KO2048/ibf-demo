@@ -1194,6 +1194,13 @@ body.observe-lab-page {
   color: rgba(246, 244, 239, 0.62);
 }
 
+.lab-summary-sensor {
+  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(166, 220, 255, 0.72);
+  font-variant-numeric: tabular-nums;
+}
+
 .lab-debug-toggle {
   appearance: none;
   border: 1px solid rgba(255, 255, 255, 0.12);

@@ -1,6 +1,12 @@
 const diagnosticsCore = window.ObserveDiagnosticsCore || {};
 const clamp = diagnosticsCore.clamp || ((value, min, max) => Math.min(max, Math.max(min, value)));
 const lerp = diagnosticsCore.lerp || ((start, end, amount) => start + (end - start) * amount);
+const normalizeAngleDelta = diagnosticsCore.normalizeAngleDelta || ((delta) => {
+  let next = delta;
+  while (next > 180) next -= 360;
+  while (next < -180) next += 360;
+  return next;
+});
 const computeWindowTargets = diagnosticsCore.computeWindowTargets;
 const computeCameraMotion = diagnosticsCore.computeCameraMotion;
 const computeObservationProjection = diagnosticsCore.computeObservationProjection;
@@ -14,6 +20,7 @@ const centerZone = document.getElementById('labCenterZone');
 const targetsLayer = document.getElementById('labTargetsLayer');
 const summaryPrimaryEl = document.getElementById('labSummaryPrimary');
 const summarySecondaryEl = document.getElementById('labSummarySecondary');
+const sensorSummaryEl = document.getElementById('labSensorSummary');
 const debugToggleBtn = document.getElementById('labDebugToggle');
 const debugDetailsEl = document.getElementById('labDebugDetails');
 const debugContent = document.getElementById('labDebugContent');
@@ -28,7 +35,7 @@ const startBtn = document.getElementById('labStartBtn');
 const recenterBtn = document.getElementById('labRecenterBtn');
 
 const BUILD_INFO = {
-  label: 'observe-lab-v5',
+  label: 'observe-lab-v6',
   channel: 'main',
 };
 
@@ -103,6 +110,7 @@ function computeLabScreenAnchor() {
 
 let stream;
 let orientationPermission = 'idle';
+let gyroPermission = 'idle';
 let lastFrameAt = 0;
 
 let labState = createLabState();
@@ -136,6 +144,9 @@ function createCameraState() {
     latestAlpha: null,
     latestBeta: null,
     latestGamma: null,
+    latestGyroAlpha: null,
+    latestGyroBeta: null,
+    latestGyroGamma: null,
     prevAlpha: null,
     prevBeta: null,
     prevGamma: null,
@@ -158,6 +169,10 @@ function createCameraState() {
     debugSelectedDistanceDelta: null,
     debugSelectedClosingScore: null,
     debugSelectedRadialForce: null,
+    orientationSampleCount: 0,
+    gyroSampleCount: 0,
+    lastOrientationAt: 0,
+    lastGyroAt: 0,
     facingMode: 'unknown',
     cameraLabel: '',
     isMirrored: false,
@@ -192,8 +207,8 @@ function deriveExperimentStateLabel() {
   if (cameraState.experimentState === 'starting') {
     if (cameraState.cameraStreamState === 'requesting') return '请求相机中';
     if (cameraState.cameraStreamState === 'failed') return '相机失败';
-    if (cameraState.motionState === 'permission-denied') return '动作权限被拒绝';
-    if (cameraState.motionState === 'waiting-permission') return '等待动作权限';
+    if (cameraState.motionState === 'permission-denied') return '姿态权限被拒绝';
+    if (cameraState.motionState === 'waiting-permission') return '等待姿态权限';
     if (cameraState.motionState === 'waiting-calibration') return '等待标定';
     return '准备中';
   }
@@ -206,8 +221,8 @@ function deriveHeaderStatus() {
       return '请求相机中';
     case 'live': {
       const roleLabel = cameraRoleLabel();
-      if (cameraState.motionState === 'permission-denied') return `${roleLabel} · 动作权限被拒绝`;
-      if (cameraState.motionState === 'waiting-permission') return `${roleLabel} · 等待动作权限`;
+      if (cameraState.motionState === 'permission-denied') return `${roleLabel} · 姿态权限被拒绝`;
+      if (cameraState.motionState === 'waiting-permission') return `${roleLabel} · 等待姿态权限`;
       if (cameraState.motionState === 'waiting-calibration') return `${roleLabel} · 等待标定`;
       if (cameraState.motionState === 'ready') return `${roleLabel} · 观察已就绪`;
       return roleLabel;
@@ -302,6 +317,26 @@ async function ensureOrientationPermission() {
   return true;
 }
 
+async function ensureGyroPermission() {
+  if (gyroPermission === 'granted') return true;
+  if (gyroPermission === 'denied') return false;
+  if (gyroPermission === 'unsupported') return false;
+
+  if (typeof window.DeviceMotionEvent === 'undefined') {
+    gyroPermission = 'unsupported';
+    return false;
+  }
+
+  if (typeof window.DeviceMotionEvent.requestPermission === 'function') {
+    const result = await window.DeviceMotionEvent.requestPermission();
+    gyroPermission = result === 'granted' ? 'granted' : 'denied';
+    return gyroPermission === 'granted';
+  }
+
+  gyroPermission = 'granted';
+  return true;
+}
+
 function recenterObservationWindow() {
   cameraState.baseAlpha = Number.isFinite(cameraState.latestAlpha) ? cameraState.latestAlpha : null;
   cameraState.baseBeta = cameraState.latestBeta;
@@ -331,9 +366,21 @@ function recenterObservationWindow() {
 }
 
 function onOrientation(event) {
-  cameraState.latestAlpha = typeof event.alpha === 'number' ? event.alpha : cameraState.latestAlpha;
-  cameraState.latestBeta = typeof event.beta === 'number' ? event.beta : cameraState.latestBeta;
-  cameraState.latestGamma = typeof event.gamma === 'number' ? event.gamma : cameraState.latestGamma;
+  const hasAlpha = typeof event.alpha === 'number';
+  const hasBeta = typeof event.beta === 'number';
+  const hasGamma = typeof event.gamma === 'number';
+  cameraState.latestAlpha = hasAlpha ? event.alpha : cameraState.latestAlpha;
+  cameraState.latestBeta = hasBeta ? event.beta : cameraState.latestBeta;
+  cameraState.latestGamma = hasGamma ? event.gamma : cameraState.latestGamma;
+
+  if (hasAlpha || hasBeta || hasGamma) {
+    orientationPermission = 'granted';
+    cameraState.orientationSampleCount += 1;
+    cameraState.lastOrientationAt = performance.now();
+    if (cameraState.motionState === 'permission-denied' && cameraState.experimentState === 'starting') {
+      cameraState.motionState = 'waiting-calibration';
+    }
+  }
 
   if (
     cameraState.motionState !== 'idle'
@@ -345,6 +392,22 @@ function onOrientation(event) {
     recenterObservationWindow();
     renderLabSummary();
   }
+}
+
+function onDeviceMotion(event) {
+  const rotation = event.rotationRate || {};
+  const hasAlpha = typeof rotation.alpha === 'number';
+  const hasBeta = typeof rotation.beta === 'number';
+  const hasGamma = typeof rotation.gamma === 'number';
+
+  if (!hasAlpha && !hasBeta && !hasGamma) return;
+
+  gyroPermission = 'granted';
+  cameraState.latestGyroAlpha = hasAlpha ? rotation.alpha : cameraState.latestGyroAlpha;
+  cameraState.latestGyroBeta = hasBeta ? rotation.beta : cameraState.latestGyroBeta;
+  cameraState.latestGyroGamma = hasGamma ? rotation.gamma : cameraState.latestGyroGamma;
+  cameraState.gyroSampleCount += 1;
+  cameraState.lastGyroAt = performance.now();
 }
 
 function refreshObservationWindowTargets() {
@@ -587,6 +650,55 @@ function targetDisplayLabel(id) {
   return labState.mode === 'pair' ? PAIR_LABELS[id] : `#${id}`;
 }
 
+function permissionLabel(value) {
+  if (value === 'granted') return 'granted';
+  if (value === 'denied') return 'denied';
+  if (value === 'unsupported') return 'unsupported';
+  return 'idle';
+}
+
+function formatAge(lastAt) {
+  if (!lastAt) return '--';
+  const ageSeconds = Math.max(0, (performance.now() - lastAt) / 1000);
+  return `${ageSeconds.toFixed(ageSeconds < 10 ? 1 : 0)}s`;
+}
+
+function getOrientationDeltas() {
+  return {
+    alpha: Number.isFinite(cameraState.latestAlpha) && Number.isFinite(cameraState.baseAlpha)
+      ? normalizeAngleDelta(cameraState.latestAlpha - cameraState.baseAlpha)
+      : null,
+    beta: Number.isFinite(cameraState.latestBeta) && Number.isFinite(cameraState.baseBeta)
+      ? cameraState.latestBeta - cameraState.baseBeta
+      : null,
+    gamma: Number.isFinite(cameraState.latestGamma) && Number.isFinite(cameraState.baseGamma)
+      ? cameraState.latestGamma - cameraState.baseGamma
+      : null,
+  };
+}
+
+function formatSensorTriple(prefix, alpha, beta, gamma, digits = 1) {
+  return `${prefix} α${formatNumber(alpha, digits)} β${formatNumber(beta, digits)} γ${formatNumber(gamma, digits)}`;
+}
+
+function deriveSensorSummaryLine() {
+  const orientation = formatSensorTriple(
+    'ori',
+    cameraState.latestAlpha,
+    cameraState.latestBeta,
+    cameraState.latestGamma,
+    0,
+  );
+  const gyro = formatSensorTriple(
+    'gyro',
+    cameraState.latestGyroAlpha,
+    cameraState.latestGyroBeta,
+    cameraState.latestGyroGamma,
+    1,
+  );
+  return `传感器：${orientation} · ${gyro} · samples ${cameraState.orientationSampleCount}/${cameraState.gyroSampleCount} · age ${formatAge(cameraState.lastOrientationAt)}/${formatAge(cameraState.lastGyroAt)}`;
+}
+
 function updateTargets() {
   projectLabTargets();
   const center = getCaptureFrameCenter();
@@ -638,8 +750,11 @@ function deriveHint() {
   if (cameraState.cameraStreamState === 'failed') return '无法启动后摄';
   if (cameraState.cameraStreamState === 'requesting') return '请求相机中';
   if (cameraState.cameraStreamState === 'idle') return '等待开始';
-  if (cameraState.motionState === 'permission-denied') return '动作权限被拒绝';
-  if (cameraState.motionState === 'waiting-permission') return '等待动作权限';
+  if (cameraState.motionState === 'permission-denied') return '无法读取手机转向，移动手机不会改变测试对象';
+  if (cameraState.motionState === 'waiting-permission') return '等待姿态权限';
+  if (cameraState.motionState === 'waiting-calibration' && cameraState.orientationSampleCount === 0) {
+    return '未收到姿态采样，移动手机不会改变测试对象';
+  }
   if (cameraState.motionState === 'waiting-calibration') return '等待标定';
   if (!isDiagnosticActive()) return deriveExperimentStateLabel();
   if (cameraState.motionMagnitude <= WINDOW_TUNING.motionDeadZone) return '等待移动';
@@ -681,6 +796,7 @@ function deriveSummaryState() {
 function renderLabSummary() {
   const diagnosticActive = isDiagnosticActive();
   const viewOffset = getCurrentViewOffset();
+  const orientationDeltas = getOrientationDeltas();
   labState.hint = deriveHint();
   statusEl.textContent = deriveHeaderStatus();
   compactStatusEl.textContent = `${compactModeLabel()} · 当前追 ${targetDisplayLabel(labState.selectedTarget)}`;
@@ -688,12 +804,19 @@ function renderLabSummary() {
   const summary = deriveSummaryState();
   summaryPrimaryEl.textContent = summary.primary;
   summarySecondaryEl.textContent = summary.secondary;
+  sensorSummaryEl.textContent = deriveSensorSummaryLine();
 
   const lines = [
     `stream   ${cameraState.cameraStreamState}`,
     `role     ${cameraState.cameraRoleState}`,
     `motion   ${cameraState.motionState}`,
     `experim  ${cameraState.experimentState}`,
+    `perm     ori ${permissionLabel(orientationPermission)}  gyro ${permissionLabel(gyroPermission)}`,
+    `samples  ori ${cameraState.orientationSampleCount}  gyro ${cameraState.gyroSampleCount}`,
+    `age      ori ${formatAge(cameraState.lastOrientationAt)}  gyro ${formatAge(cameraState.lastGyroAt)}`,
+    `ori      alpha ${formatNumber(cameraState.latestAlpha, 2)}  beta ${formatNumber(cameraState.latestBeta, 2)}  gamma ${formatNumber(cameraState.latestGamma, 2)}`,
+    `ori d    alpha ${formatNumber(orientationDeltas.alpha, 2)}  beta ${formatNumber(orientationDeltas.beta, 2)}  gamma ${formatNumber(orientationDeltas.gamma, 2)}`,
+    `gyro     alpha ${formatNumber(cameraState.latestGyroAlpha, 2)}  beta ${formatNumber(cameraState.latestGyroBeta, 2)}  gamma ${formatNumber(cameraState.latestGyroGamma, 2)}`,
     `cam      ${cameraState.facingMode}`,
     `mode     ${labState.mode === 'pair' ? `pair-${labState.pairPreset}` : 'sample-8'}`,
     `target   ${targetDisplayLabel(labState.selectedTarget)}`,
@@ -774,18 +897,26 @@ async function startExperiment() {
   cameraState.motionState = 'waiting-permission';
   renderLabSummary();
 
+  let orientationGranted = false;
   try {
-    const granted = await ensureOrientationPermission();
-    if (!granted) {
-      cameraState.motionState = 'permission-denied';
-      cameraState.lastError = 'Device orientation permission denied';
-      renderLabSummary();
-      return;
-    }
+    orientationGranted = await ensureOrientationPermission();
   } catch (error) {
     orientationPermission = 'denied';
+    cameraState.lastError = error instanceof Error ? error.message : '姿态权限请求失败';
+  }
+
+  try {
+    await ensureGyroPermission();
+  } catch (error) {
+    gyroPermission = 'denied';
+    if (!cameraState.lastError) {
+      cameraState.lastError = error instanceof Error ? error.message : '陀螺仪权限请求失败';
+    }
+  }
+
+  if (!orientationGranted) {
     cameraState.motionState = 'permission-denied';
-    cameraState.lastError = error instanceof Error ? error.message : '动作权限请求失败';
+    if (!cameraState.lastError) cameraState.lastError = 'Device orientation permission denied';
     renderLabSummary();
     return;
   }
@@ -814,6 +945,7 @@ function loop(now) {
 
 function bindEvents() {
   window.addEventListener('deviceorientation', onOrientation, true);
+  window.addEventListener('devicemotion', onDeviceMotion, true);
   window.addEventListener('resize', onResize);
   startBtn.addEventListener('click', startExperiment);
   recenterBtn.addEventListener('click', () => {
