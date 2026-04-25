@@ -39,7 +39,7 @@
 | NOW-001 | 稳定观察窗坐标体系与追逐辅助 | engineering | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:58 CST | 后摄观察窗“连续受力式追近”重做计划 | `observe-v3` |  |  | 已把后摄追逐主模型从“方向匹配”切到“连续运动向量 + 距离缩短力”，并继续收紧 startle 触发门槛；待 iPhone 后摄复测“越追越远”是否消失 | 先让“越追越远”消失，再收可抓性和稳手感；当前仍不改主玩法结构 |
 | NOW-002 | iPhone Safari 验证“追近 / 看丢 / 惊走”三段体验 | ux | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 2 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:32 CST | TBD | TBD |  |  | 待下一轮 GitHub Pages 实测；重点验证右 / 下 / 右下三种后摄追近是否更符合直觉 | 成功标准：追它有帮助、不会太难、追错更像看丢、动作轻一点更好抓、整体更像在追蝴蝶 |
 | NOW-003 | 给页面加入可见 build / version 标记 | process | active | P1 | 2026-04-24 | user-feedback | GitHub Pages 缓存混淆反馈 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:58 CST | Build 标记一致性修复计划 | `observe-v3` |  |  | 页面当前本地将由 `BUILD_INFO` 渲染 `build observe-v3 · main`；真实 commit 继续由 `Change Log` 追溯 | 用于实机测试时确认缓存与 build 对应关系，避免 UI 文案与真实 commit 再次过期 |
-| NOW-004 | 新增后摄双模式实验页校准追近语义 | engineering | active | P1 | 2026-04-24 | user-feedback | 红蓝对称 / 多点编号采样诊断方案 | Phase 1 | Codex | 2026-04-24 21:32 CST | Codex | 2026-04-24 23:03 CST | 后摄观察窗实验页：双模式同页诊断计划 | `observe-lab-v2` |  |  | 独立实验页已具备固定双目标和 8 点采样诊断；本轮继续把布局改成“中央无遮挡 + 底部摘要/折叠详情”，降低后摄测试遮挡 | 该页不带随机飞行、startle、timing、甩动，只做后摄观察语义诊断 |
+| NOW-004 | 新增后摄双模式实验页校准追近语义 | engineering | active | P1 | 2026-04-24 | user-feedback | 红蓝对称 / 多点编号采样诊断方案 | Phase 1 | Codex | 2026-04-24 21:32 CST | Codex | 2026-04-25 09:36 CST | Observe Lab 结构纠偏计划（v3） | `observe-lab-v3` |  |  | 实验页本轮先修两件结构真值：后摄状态统一改成真实状态机；红蓝块 / 编号块改成围绕世界层原点生成，捕获框只保留为被动参照 | 该页仍不带随机飞行、startle、timing、甩动，只做后摄观察语义诊断；下一步重点验证“后摄已开时页面状态是否说真话”，以及页面是否不再给人“测试点属于捕获层”的感觉 |
 
 ## Next
 
@@ -138,3 +138,4 @@
 - 2026-04-24 20:58 CST · Codex：本地切换到 `observe-v3`：追逐输入从绝对朝向改为短时连续运动向量，调试层改看 `motion / closing force / butterfly vec`，离线脚本改成 8 向量扫角验证；待真机验证“越追越远”是否消失。
 - 2026-04-24 21:32 CST · Codex：本地新增 `observe-lab.html` / `observe-lab.js`，采用“对称模式 + 采样模式”双模式同页的后摄实验页；用于固定目标下判断真正进入中心区的是不是用户想追的对象。
 - 2026-04-24 23:03 CST · Codex：继续收窄 `observe-lab` 作用范围，只改展示层级；实验页改成中央无遮挡布局，调试结果下沉到底部“摘要常显 + 详情折叠”，并将实验页 build 标签前进到 `observe-lab-v2`，方便 iPhone 后摄测试和截图取证。
+- 2026-04-25 09:36 CST · Codex：本地将 `observe-lab` 继续推进到 `observe-lab-v3`；后摄状态改成 `cameraStreamState + motionState` 单一派生语义，同时把红蓝块 / 编号块从捕获层锚定改成世界层原点 `labWorldOrigin` 生成，捕获框与中心区只保留为被动参照。

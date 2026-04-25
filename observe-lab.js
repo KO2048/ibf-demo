@@ -27,7 +27,7 @@ const startBtn = document.getElementById('labStartBtn');
 const recenterBtn = document.getElementById('labRecenterBtn');
 
 const BUILD_INFO = {
-  label: 'observe-lab-v2',
+  label: 'observe-lab-v3',
   channel: 'main',
 };
 
@@ -83,9 +83,14 @@ const SAMPLE_ANGLES = [
   { id: '8', angleDeg: 225 },
 ];
 
+function computeLabWorldOrigin() {
+  return {
+    x: window.innerWidth * 0.5,
+    y: window.innerHeight * 0.34,
+  };
+}
+
 let stream;
-let cameraReady = false;
-let running = false;
 let orientationPermission = 'idle';
 let lastFrameAt = 0;
 
@@ -104,11 +109,14 @@ function createLabState() {
     winnerDistance: 0,
     hint: '等待开始',
     debugExpanded: false,
+    labWorldOrigin: computeLabWorldOrigin(),
   };
 }
 
 function createCameraState() {
   return {
+    cameraStreamState: 'idle',
+    motionState: 'idle',
     latestAlpha: null,
     latestBeta: null,
     latestGamma: null,
@@ -133,8 +141,35 @@ function createCameraState() {
   };
 }
 
-function setStatus(message) {
-  statusEl.textContent = message;
+function updateLabWorldOrigin() {
+  labState.labWorldOrigin = computeLabWorldOrigin();
+}
+
+function deriveStatusText() {
+  switch (cameraState.cameraStreamState) {
+    case 'requesting':
+      return '请求后摄中';
+    case 'live-environment':
+      if (cameraState.motionState === 'waiting-permission') return '后摄已连接 · 等待动作权限';
+      if (cameraState.motionState === 'waiting-calibration') return '后摄已连接 · 等待标定';
+      if (cameraState.motionState === 'ready') return '后摄已连接 · 观察已就绪';
+      return '后摄已连接';
+    case 'live-non-environment':
+      return '摄像头已连接 · 非后摄';
+    case 'failed':
+      return '无法启动后摄';
+    case 'idle':
+    default:
+      return '等待开始';
+  }
+}
+
+function syncMotionStateFromReadiness() {
+  if (orientationPermission !== 'granted') {
+    cameraState.motionState = 'waiting-permission';
+    return;
+  }
+  cameraState.motionState = cameraState.orientationReady ? 'ready' : 'waiting-calibration';
 }
 
 function renderBuildStamp() {
@@ -158,10 +193,11 @@ function updateCameraTrackInfo(track) {
   cameraState.facingMode = facingMode;
   cameraState.cameraLabel = cameraLabel;
   cameraState.isMirrored = facingMode === 'user';
+  cameraState.cameraStreamState = facingMode === 'environment' ? 'live-environment' : 'live-non-environment';
 }
 
 async function startCamera() {
-  if (cameraReady) return;
+  if (cameraState.cameraStreamState === 'live-environment' || cameraState.cameraStreamState === 'live-non-environment') return;
   stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: { ideal: 'environment' } },
     audio: false,
@@ -169,7 +205,6 @@ async function startCamera() {
   updateCameraTrackInfo(stream.getVideoTracks()[0]);
   video.srcObject = stream;
   await video.play();
-  cameraReady = true;
 }
 
 async function ensureOrientationPermission() {
@@ -204,6 +239,7 @@ function recenterObservationWindow() {
   cameraState.motionY = 0;
   cameraState.motionMagnitude = 0;
   cameraState.horizontalInputMode = Number.isFinite(cameraState.baseAlpha) ? 'alpha' : 'gamma-fallback';
+  syncMotionStateFromReadiness();
 }
 
 function onOrientation(event) {
@@ -212,18 +248,18 @@ function onOrientation(event) {
   cameraState.latestGamma = typeof event.gamma === 'number' ? event.gamma : cameraState.latestGamma;
 
   if (
-    running
+    cameraState.motionState !== 'idle'
     && !cameraState.orientationReady
     && Number.isFinite(cameraState.latestBeta)
     && (Number.isFinite(cameraState.latestAlpha) || Number.isFinite(cameraState.latestGamma))
   ) {
     recenterObservationWindow();
-    setStatus(cameraState.facingMode === 'environment' ? '后摄实验已启动' : '摄像头异常');
+    renderLabSummary();
   }
 }
 
 function refreshObservationWindowTargets() {
-  if (!cameraState.orientationReady || !computeWindowTargets || !computeCameraMotion) return;
+  if (cameraState.motionState !== 'ready' || !computeWindowTargets || !computeCameraMotion) return;
 
   const targets = computeWindowTargets({
     latestAlpha: cameraState.latestAlpha,
@@ -262,8 +298,8 @@ function refreshObservationWindowTargets() {
 }
 
 function updateObservationWindow(dt) {
-  const desiredX = running && cameraState.orientationReady ? cameraState.targetOffsetX : 0;
-  const desiredY = running && cameraState.orientationReady ? cameraState.targetOffsetY : 0;
+  const desiredX = cameraState.motionState === 'ready' ? cameraState.targetOffsetX : 0;
+  const desiredY = cameraState.motionState === 'ready' ? cameraState.targetOffsetY : 0;
   const amount = clamp(dt * WINDOW_TUNING.windowTargetSmoothing, 0, 1);
   cameraState.windowOffsetX = lerp(cameraState.windowOffsetX, desiredX, amount);
   cameraState.windowOffsetY = lerp(cameraState.windowOffsetY, desiredY, amount);
@@ -308,7 +344,8 @@ function createTargetElement(target) {
 }
 
 function rebuildTargets() {
-  const center = getCaptureFrameCenter();
+  updateLabWorldOrigin();
+  const center = labState.labWorldOrigin;
   targetsLayer.innerHTML = '';
   const targets = [];
 
@@ -437,13 +474,18 @@ function updateTargets() {
 }
 
 function getHint() {
-  if (!running || !cameraReady) return '后摄未就绪';
-  if (cameraState.facingMode !== 'environment') return '后摄未就绪';
+  if (cameraState.cameraStreamState === 'failed') return '后摄未就绪';
+  if (cameraState.cameraStreamState === 'requesting') return '请求后摄中';
+  if (cameraState.cameraStreamState === 'idle') return '等待开始';
+  if (cameraState.cameraStreamState !== 'live-environment') return '后摄未就绪';
+  if (cameraState.motionState === 'waiting-permission') return '等待动作权限';
+  if (cameraState.motionState === 'waiting-calibration') return '等待标定';
+  if (cameraState.motionState !== 'ready') return '等待开始';
   if (cameraState.motionMagnitude <= WINDOW_TUNING.motionDeadZone) return '等待移动';
   if (labState.enteredTargetId) {
     return labState.enteredTargetId === labState.selectedTarget
-      ? '目标进入中心区'
-      : '非目标进入中心区';
+      ? '目标进入参照中心区'
+      : '非目标进入参照中心区';
   }
 
   const target = labState.targets.find((item) => item.id === labState.selectedTarget);
@@ -453,24 +495,28 @@ function getHint() {
   if (Math.abs(target.distance - winner.distance) <= LAB_CONFIG.distanceTieThreshold) {
     return '两者接近相当';
   }
-  if (winner.id === target.id) return '目标更接近中心';
+  if (winner.id === target.id) return '目标更接近参照中心';
   if (target.delta < -0.35 && winner.delta > 0.15) return '你在把观察窗移开';
-  return '非目标更接近中心';
+  return '非目标更接近参照中心';
 }
 
 function renderLabSummary() {
   labState.hint = getHint();
+  statusEl.textContent = deriveStatusText();
   compactStatusEl.textContent = `${compactModeLabel()} · 当前追 ${targetDisplayLabel(labState.selectedTarget)}`;
 
   const winnerLabel = targetDisplayLabel(labState.closestTargetId);
   const enteredLabel = targetDisplayLabel(labState.enteredTargetId);
-  summaryPrimaryEl.textContent = `当前目标：${targetDisplayLabel(labState.selectedTarget)} · 当前更接近中心：${winnerLabel}`;
-  summarySecondaryEl.textContent = `判读：${labState.hint} · 中心区：${enteredLabel}`;
+  summaryPrimaryEl.textContent = `当前目标：${targetDisplayLabel(labState.selectedTarget)} · 当前更接近参照中心：${winnerLabel}`;
+  summarySecondaryEl.textContent = `判读：${labState.hint} · 参照中心区：${enteredLabel}`;
 
   const lines = [
+    `stream   ${cameraState.cameraStreamState}`,
+    `motionst ${cameraState.motionState}`,
     `cam      ${cameraState.facingMode}`,
     `mode     ${labState.mode === 'pair' ? `pair-${labState.pairPreset}` : 'sample-8'}`,
     `target   ${targetDisplayLabel(labState.selectedTarget)}`,
+    `origin   x ${formatNumber(labState.labWorldOrigin.x)}  y ${formatNumber(labState.labWorldOrigin.y)}`,
     `motion   x ${formatNumber(cameraState.motionX, 2)}  y ${formatNumber(cameraState.motionY, 2)}  mag ${formatNumber(cameraState.motionMagnitude, 2)}`,
     `winner   ${targetDisplayLabel(labState.closestTargetId)}`,
     `entered  ${targetDisplayLabel(labState.enteredTargetId)}`,
@@ -519,24 +565,23 @@ function setPairPreset(nextPreset) {
 }
 
 async function startExperiment() {
-  setStatus('请求后摄中');
+  cameraState.cameraStreamState = 'requesting';
+  cameraState.motionState = 'waiting-permission';
+  renderLabSummary();
   try {
     await startCamera();
     const granted = await ensureOrientationPermission();
     if (!granted) {
-      setStatus('动作权限被拒绝');
+      cameraState.motionState = 'waiting-permission';
+      renderLabSummary();
       return;
     }
-    running = true;
+    cameraState.motionState = 'waiting-calibration';
     recenterObservationWindow();
-    setStatus(
-      cameraState.orientationReady
-        ? (cameraState.facingMode === 'environment' ? '后摄实验已启动' : '摄像头异常')
-        : '轻轻移动手机完成标定',
-    );
     renderLabSummary();
   } catch (error) {
-    setStatus('无法启动后摄');
+    cameraState.cameraStreamState = 'failed';
+    cameraState.motionState = 'idle';
     debugContent.textContent = error instanceof Error ? error.message : '启动失败';
     renderLabSummary();
   }
@@ -563,7 +608,7 @@ function bindEvents() {
   startBtn.addEventListener('click', startExperiment);
   recenterBtn.addEventListener('click', () => {
     recenterObservationWindow();
-    setStatus('观察窗已重标定');
+    renderLabSummary();
   });
   pairModeBtn.addEventListener('click', () => setMode('pair'));
   sampleModeBtn.addEventListener('click', () => setMode('sample'));
@@ -578,6 +623,7 @@ function bindEvents() {
 
 function init() {
   renderBuildStamp();
+  updateLabWorldOrigin();
   bindEvents();
   setPairPreset('horizontal');
   setMode('pair');
