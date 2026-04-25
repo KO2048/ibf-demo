@@ -3,6 +3,7 @@ const clamp = diagnosticsCore.clamp || ((value, min, max) => Math.min(max, Math.
 const lerp = diagnosticsCore.lerp || ((start, end, amount) => start + (end - start) * amount);
 const computeWindowTargets = diagnosticsCore.computeWindowTargets;
 const computeCameraMotion = diagnosticsCore.computeCameraMotion;
+const computeObservationProjection = diagnosticsCore.computeObservationProjection;
 
 const video = document.getElementById('labCamera');
 const statusEl = document.getElementById('labStatus');
@@ -27,7 +28,7 @@ const startBtn = document.getElementById('labStartBtn');
 const recenterBtn = document.getElementById('labRecenterBtn');
 
 const BUILD_INFO = {
-  label: 'observe-lab-v3',
+  label: 'observe-lab-v5',
   channel: 'main',
 };
 
@@ -46,6 +47,16 @@ const WINDOW_TUNING = {
   motionSignY: -1,
   motionSmoothing: 0.26,
   motionDeadZone: 1.05,
+  closingScoreThreshold: 0.1,
+  closingForceScale: 2.8,
+  closingForceFar: 0.92,
+  closingForceMid: 0.5,
+  closingForceNear: 0.18,
+  closingMidRadius: 208,
+  closingNearRadius: 116,
+  noAutoCaptureRadius: 74,
+  assistDamping: 5.2,
+  maxWindowVelocity: 68,
 };
 
 const LAB_CONFIG = {
@@ -83,7 +94,7 @@ const SAMPLE_ANGLES = [
   { id: '8', angleDeg: 225 },
 ];
 
-function computeLabWorldOrigin() {
+function computeLabScreenAnchor() {
   return {
     x: window.innerWidth * 0.5,
     y: window.innerHeight * 0.34,
@@ -98,6 +109,7 @@ let labState = createLabState();
 let cameraState = createCameraState();
 
 function createLabState() {
+  const labScreenAnchor = computeLabScreenAnchor();
   return {
     mode: 'pair',
     pairPreset: 'horizontal',
@@ -105,18 +117,22 @@ function createLabState() {
     targets: [],
     closestTargetId: '',
     enteredTargetId: '',
-    targetDistance: 0,
-    winnerDistance: 0,
+    targetDistance: null,
+    winnerDistance: null,
     hint: '等待开始',
     debugExpanded: false,
-    labWorldOrigin: computeLabWorldOrigin(),
+    labScreenAnchor,
+    labWorldOrigin: { ...labScreenAnchor },
+    selectedProjection: null,
   };
 }
 
 function createCameraState() {
   return {
     cameraStreamState: 'idle',
+    cameraRoleState: 'rear-unconfirmed',
     motionState: 'idle',
+    experimentState: 'idle',
     latestAlpha: null,
     latestBeta: null,
     latestGamma: null,
@@ -132,30 +148,70 @@ function createCameraState() {
     targetOffsetY: 0,
     windowOffsetX: 0,
     windowOffsetY: 0,
+    assistOffsetX: 0,
+    assistOffsetY: 0,
     motionX: 0,
     motionY: 0,
     motionMagnitude: 0,
+    debugSelectedDistanceBefore: null,
+    debugSelectedDistanceAfter: null,
+    debugSelectedDistanceDelta: null,
+    debugSelectedClosingScore: null,
+    debugSelectedRadialForce: null,
     facingMode: 'unknown',
     cameraLabel: '',
     isMirrored: false,
+    lastError: '',
   };
 }
 
-function updateLabWorldOrigin() {
-  labState.labWorldOrigin = computeLabWorldOrigin();
+function getCurrentViewOffset() {
+  return {
+    x: cameraState.windowOffsetX + cameraState.assistOffsetX,
+    y: cameraState.windowOffsetY + cameraState.assistOffsetY,
+  };
 }
 
-function deriveStatusText() {
+function syncLabWorldOriginFromCurrentView() {
+  labState.labScreenAnchor = computeLabScreenAnchor();
+  const viewOffset = getCurrentViewOffset();
+  labState.labWorldOrigin = {
+    x: viewOffset.x + labState.labScreenAnchor.x,
+    y: viewOffset.y + labState.labScreenAnchor.y,
+  };
+}
+
+function cameraRoleLabel() {
+  if (cameraState.cameraRoleState === 'rear-confirmed') return '后摄已连接';
+  if (cameraState.cameraRoleState === 'non-rear') return '摄像头已连接 · 非后摄';
+  return '相机已连接 · 后摄待确认';
+}
+
+function deriveExperimentStateLabel() {
+  if (cameraState.experimentState === 'active') return '诊断中';
+  if (cameraState.experimentState === 'starting') {
+    if (cameraState.cameraStreamState === 'requesting') return '请求相机中';
+    if (cameraState.cameraStreamState === 'failed') return '相机失败';
+    if (cameraState.motionState === 'permission-denied') return '动作权限被拒绝';
+    if (cameraState.motionState === 'waiting-permission') return '等待动作权限';
+    if (cameraState.motionState === 'waiting-calibration') return '等待标定';
+    return '准备中';
+  }
+  return '未开始';
+}
+
+function deriveHeaderStatus() {
   switch (cameraState.cameraStreamState) {
     case 'requesting':
-      return '请求后摄中';
-    case 'live-environment':
-      if (cameraState.motionState === 'waiting-permission') return '后摄已连接 · 等待动作权限';
-      if (cameraState.motionState === 'waiting-calibration') return '后摄已连接 · 等待标定';
-      if (cameraState.motionState === 'ready') return '后摄已连接 · 观察已就绪';
-      return '后摄已连接';
-    case 'live-non-environment':
-      return '摄像头已连接 · 非后摄';
+      return '请求相机中';
+    case 'live': {
+      const roleLabel = cameraRoleLabel();
+      if (cameraState.motionState === 'permission-denied') return `${roleLabel} · 动作权限被拒绝`;
+      if (cameraState.motionState === 'waiting-permission') return `${roleLabel} · 等待动作权限`;
+      if (cameraState.motionState === 'waiting-calibration') return `${roleLabel} · 等待标定`;
+      if (cameraState.motionState === 'ready') return `${roleLabel} · 观察已就绪`;
+      return roleLabel;
+    }
     case 'failed':
       return '无法启动后摄';
     case 'idle':
@@ -164,12 +220,29 @@ function deriveStatusText() {
   }
 }
 
+function isDiagnosticActive() {
+  return cameraState.experimentState === 'active'
+    && cameraState.motionState === 'ready'
+    && cameraState.cameraStreamState === 'live';
+}
+
 function syncMotionStateFromReadiness() {
+  if (orientationPermission === 'denied') {
+    cameraState.motionState = 'permission-denied';
+    return;
+  }
   if (orientationPermission !== 'granted') {
-    cameraState.motionState = 'waiting-permission';
+    cameraState.motionState = cameraState.experimentState === 'idle' ? 'idle' : 'waiting-permission';
     return;
   }
   cameraState.motionState = cameraState.orientationReady ? 'ready' : 'waiting-calibration';
+  if (
+    cameraState.experimentState === 'starting'
+    && cameraState.cameraStreamState === 'live'
+    && cameraState.motionState === 'ready'
+  ) {
+    cameraState.experimentState = 'active';
+  }
 }
 
 function renderBuildStamp() {
@@ -193,18 +266,25 @@ function updateCameraTrackInfo(track) {
   cameraState.facingMode = facingMode;
   cameraState.cameraLabel = cameraLabel;
   cameraState.isMirrored = facingMode === 'user';
-  cameraState.cameraStreamState = facingMode === 'environment' ? 'live-environment' : 'live-non-environment';
+  if (facingMode === 'environment') {
+    cameraState.cameraRoleState = 'rear-confirmed';
+  } else if (facingMode === 'user') {
+    cameraState.cameraRoleState = 'non-rear';
+  } else {
+    cameraState.cameraRoleState = 'rear-unconfirmed';
+  }
 }
 
 async function startCamera() {
-  if (cameraState.cameraStreamState === 'live-environment' || cameraState.cameraStreamState === 'live-non-environment') return;
+  if (cameraState.cameraStreamState === 'live') return;
   stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: { ideal: 'environment' } },
     audio: false,
   });
-  updateCameraTrackInfo(stream.getVideoTracks()[0]);
   video.srcObject = stream;
   await video.play();
+  updateCameraTrackInfo(stream.getVideoTracks()[0]);
+  cameraState.cameraStreamState = 'live';
 }
 
 async function ensureOrientationPermission() {
@@ -235,9 +315,17 @@ function recenterObservationWindow() {
   cameraState.targetOffsetY = 0;
   cameraState.windowOffsetX = 0;
   cameraState.windowOffsetY = 0;
+  cameraState.assistOffsetX = 0;
+  cameraState.assistOffsetY = 0;
   cameraState.motionX = 0;
   cameraState.motionY = 0;
   cameraState.motionMagnitude = 0;
+  cameraState.debugSelectedDistanceBefore = null;
+  cameraState.debugSelectedDistanceAfter = null;
+  cameraState.debugSelectedDistanceDelta = null;
+  cameraState.debugSelectedClosingScore = null;
+  cameraState.debugSelectedRadialForce = null;
+  labState.selectedProjection = null;
   cameraState.horizontalInputMode = Number.isFinite(cameraState.baseAlpha) ? 'alpha' : 'gamma-fallback';
   syncMotionStateFromReadiness();
 }
@@ -249,6 +337,7 @@ function onOrientation(event) {
 
   if (
     cameraState.motionState !== 'idle'
+    && cameraState.motionState !== 'permission-denied'
     && !cameraState.orientationReady
     && Number.isFinite(cameraState.latestBeta)
     && (Number.isFinite(cameraState.latestAlpha) || Number.isFinite(cameraState.latestGamma))
@@ -313,6 +402,70 @@ function getCaptureFrameCenter() {
   };
 }
 
+function resetSelectedProjectionDebug() {
+  labState.selectedProjection = null;
+  cameraState.debugSelectedDistanceBefore = null;
+  cameraState.debugSelectedDistanceAfter = null;
+  cameraState.debugSelectedDistanceDelta = null;
+  cameraState.debugSelectedClosingScore = null;
+  cameraState.debugSelectedRadialForce = null;
+}
+
+function updateSelectedTargetAssist(dt) {
+  const selectedTarget = labState.targets.find((target) => target.id === labState.selectedTarget);
+  const canAssist = isDiagnosticActive()
+    && selectedTarget
+    && typeof computeObservationProjection === 'function';
+  let desiredAssistX = 0;
+  let desiredAssistY = 0;
+
+  if (canAssist) {
+    const frameCenter = getCaptureFrameCenter();
+    const projection = computeObservationProjection({
+      worldX: selectedTarget.worldX,
+      worldY: selectedTarget.worldY,
+      frameX: frameCenter.x,
+      frameY: frameCenter.y,
+      windowOffsetX: cameraState.windowOffsetX,
+      windowOffsetY: cameraState.windowOffsetY,
+      motionX: cameraState.motionX,
+      motionY: cameraState.motionY,
+      tuning: WINDOW_TUNING,
+    });
+    labState.selectedProjection = projection;
+    desiredAssistX = projection.desiredAssistX;
+    desiredAssistY = projection.desiredAssistY;
+    cameraState.debugSelectedDistanceBefore = projection.distanceBefore;
+    cameraState.debugSelectedClosingScore = projection.closingScore;
+    cameraState.debugSelectedRadialForce = projection.radialForce;
+  } else {
+    resetSelectedProjectionDebug();
+  }
+
+  const assistLerp = clamp(dt * WINDOW_TUNING.assistDamping, 0, 1);
+  cameraState.assistOffsetX = lerp(cameraState.assistOffsetX, desiredAssistX, assistLerp);
+  cameraState.assistOffsetY = lerp(cameraState.assistOffsetY, desiredAssistY, assistLerp);
+
+  if (canAssist) {
+    const frameCenter = getCaptureFrameCenter();
+    const viewOffset = getCurrentViewOffset();
+    cameraState.debugSelectedDistanceAfter = Math.hypot(
+      selectedTarget.worldX - viewOffset.x - frameCenter.x,
+      selectedTarget.worldY - viewOffset.y - frameCenter.y,
+    );
+    cameraState.debugSelectedDistanceDelta = cameraState.debugSelectedDistanceAfter
+      - cameraState.debugSelectedDistanceBefore;
+  }
+}
+
+function projectLabTargets() {
+  const viewOffset = getCurrentViewOffset();
+  labState.targets.forEach((target) => {
+    target.screenX = target.worldX - viewOffset.x;
+    target.screenY = target.worldY - viewOffset.y;
+  });
+}
+
 function getPairOffsets() {
   if (labState.pairPreset === 'vertical') {
     return {
@@ -344,7 +497,7 @@ function createTargetElement(target) {
 }
 
 function rebuildTargets() {
-  updateLabWorldOrigin();
+  syncLabWorldOriginFromCurrentView();
   const center = labState.labWorldOrigin;
   targetsLayer.innerHTML = '';
   const targets = [];
@@ -390,6 +543,11 @@ function rebuildTargets() {
   }
 
   labState.targets = targets;
+  labState.closestTargetId = '';
+  labState.enteredTargetId = '';
+  labState.targetDistance = null;
+  labState.winnerDistance = null;
+  resetSelectedProjectionDebug();
   renderTargetPicker();
 }
 
@@ -430,23 +588,22 @@ function targetDisplayLabel(id) {
 }
 
 function updateTargets() {
+  projectLabTargets();
   const center = getCaptureFrameCenter();
   const halfCenter = LAB_CONFIG.centerZoneSize * 0.5;
+  const diagnosticActive = isDiagnosticActive();
   let closest = null;
   let entered = null;
 
   labState.targets.forEach((target) => {
-    target.screenX = target.worldX - cameraState.windowOffsetX;
-    target.screenY = target.worldY - cameraState.windowOffsetY;
-
     const vecX = target.screenX - center.x;
     const vecY = target.screenY - center.y;
     target.distance = Math.hypot(vecX, vecY);
-    target.delta = target.prevDistance === null ? 0 : target.prevDistance - target.distance;
-    target.prevDistance = target.distance;
+    target.delta = diagnosticActive && target.prevDistance !== null ? target.prevDistance - target.distance : 0;
+    target.prevDistance = diagnosticActive ? target.distance : null;
     target.closingScore = 0;
 
-    if (cameraState.motionMagnitude > WINDOW_TUNING.motionDeadZone && target.distance > 1) {
+    if (diagnosticActive && cameraState.motionMagnitude > WINDOW_TUNING.motionDeadZone && target.distance > 1) {
       const normX = vecX / target.distance;
       const normY = vecY / target.distance;
       const motionNormX = cameraState.motionX / cameraState.motionMagnitude;
@@ -454,33 +611,37 @@ function updateTargets() {
       target.closingScore = normX * motionNormX + normY * motionNormY;
     }
 
-    if (!closest || target.distance < closest.distance) closest = target;
-    const insideCenter = Math.abs(vecX) <= halfCenter && Math.abs(vecY) <= halfCenter;
-    if (insideCenter && (!entered || target.distance < entered.distance)) entered = target;
+    if (diagnosticActive) {
+      if (!closest || target.distance < closest.distance) closest = target;
+      const insideCenter = Math.abs(vecX) <= halfCenter && Math.abs(vecY) <= halfCenter;
+      if (insideCenter && (!entered || target.distance < entered.distance)) entered = target;
+    }
   });
 
   labState.closestTargetId = closest ? closest.id : '';
   labState.enteredTargetId = entered ? entered.id : '';
-  labState.targetDistance = labState.targets.find((target) => target.id === labState.selectedTarget)?.distance || 0;
-  labState.winnerDistance = closest ? closest.distance : 0;
+  labState.targetDistance = diagnosticActive
+    ? labState.targets.find((target) => target.id === labState.selectedTarget)?.distance || null
+    : null;
+  labState.winnerDistance = diagnosticActive && closest ? closest.distance : null;
 
   labState.targets.forEach((target) => {
     target.el.style.left = `${target.screenX}px`;
     target.el.style.top = `${target.screenY}px`;
     target.el.classList.toggle('is-selected', target.id === labState.selectedTarget);
-    target.el.classList.toggle('is-closest', target.id === labState.closestTargetId);
-    target.el.classList.toggle('is-entered', target.id === labState.enteredTargetId);
+    target.el.classList.toggle('is-closest', diagnosticActive && target.id === labState.closestTargetId);
+    target.el.classList.toggle('is-entered', diagnosticActive && target.id === labState.enteredTargetId);
   });
 }
 
-function getHint() {
-  if (cameraState.cameraStreamState === 'failed') return '后摄未就绪';
-  if (cameraState.cameraStreamState === 'requesting') return '请求后摄中';
+function deriveHint() {
+  if (cameraState.cameraStreamState === 'failed') return '无法启动后摄';
+  if (cameraState.cameraStreamState === 'requesting') return '请求相机中';
   if (cameraState.cameraStreamState === 'idle') return '等待开始';
-  if (cameraState.cameraStreamState !== 'live-environment') return '后摄未就绪';
+  if (cameraState.motionState === 'permission-denied') return '动作权限被拒绝';
   if (cameraState.motionState === 'waiting-permission') return '等待动作权限';
   if (cameraState.motionState === 'waiting-calibration') return '等待标定';
-  if (cameraState.motionState !== 'ready') return '等待开始';
+  if (!isDiagnosticActive()) return deriveExperimentStateLabel();
   if (cameraState.motionMagnitude <= WINDOW_TUNING.motionDeadZone) return '等待移动';
   if (labState.enteredTargetId) {
     return labState.enteredTargetId === labState.selectedTarget
@@ -500,40 +661,68 @@ function getHint() {
   return '非目标更接近参照中心';
 }
 
+function deriveSummaryState() {
+  const targetLabel = targetDisplayLabel(labState.selectedTarget);
+  const centerLabel = isDiagnosticActive() ? targetDisplayLabel(labState.enteredTargetId) : '--';
+
+  if (!isDiagnosticActive()) {
+    return {
+      primary: `当前目标：${targetLabel} · 当前实验：${deriveExperimentStateLabel()}`,
+      secondary: `判读：${labState.hint} · 参照中心区：${centerLabel}`,
+    };
+  }
+
+  return {
+    primary: `当前目标：${targetLabel} · 当前更接近参照中心：${targetDisplayLabel(labState.closestTargetId)}`,
+    secondary: `判读：${labState.hint} · 参照中心区：${centerLabel}`,
+  };
+}
+
 function renderLabSummary() {
-  labState.hint = getHint();
-  statusEl.textContent = deriveStatusText();
+  const diagnosticActive = isDiagnosticActive();
+  const viewOffset = getCurrentViewOffset();
+  labState.hint = deriveHint();
+  statusEl.textContent = deriveHeaderStatus();
   compactStatusEl.textContent = `${compactModeLabel()} · 当前追 ${targetDisplayLabel(labState.selectedTarget)}`;
 
-  const winnerLabel = targetDisplayLabel(labState.closestTargetId);
-  const enteredLabel = targetDisplayLabel(labState.enteredTargetId);
-  summaryPrimaryEl.textContent = `当前目标：${targetDisplayLabel(labState.selectedTarget)} · 当前更接近参照中心：${winnerLabel}`;
-  summarySecondaryEl.textContent = `判读：${labState.hint} · 参照中心区：${enteredLabel}`;
+  const summary = deriveSummaryState();
+  summaryPrimaryEl.textContent = summary.primary;
+  summarySecondaryEl.textContent = summary.secondary;
 
   const lines = [
     `stream   ${cameraState.cameraStreamState}`,
-    `motionst ${cameraState.motionState}`,
+    `role     ${cameraState.cameraRoleState}`,
+    `motion   ${cameraState.motionState}`,
+    `experim  ${cameraState.experimentState}`,
     `cam      ${cameraState.facingMode}`,
     `mode     ${labState.mode === 'pair' ? `pair-${labState.pairPreset}` : 'sample-8'}`,
     `target   ${targetDisplayLabel(labState.selectedTarget)}`,
-    `origin   x ${formatNumber(labState.labWorldOrigin.x)}  y ${formatNumber(labState.labWorldOrigin.y)}`,
-    `motion   x ${formatNumber(cameraState.motionX, 2)}  y ${formatNumber(cameraState.motionY, 2)}  mag ${formatNumber(cameraState.motionMagnitude, 2)}`,
-    `winner   ${targetDisplayLabel(labState.closestTargetId)}`,
-    `entered  ${targetDisplayLabel(labState.enteredTargetId)}`,
-    `target d ${formatNumber(labState.targetDistance)}`,
-    `winner d ${formatNumber(labState.winnerDistance)}`,
+    `anchor   x ${formatNumber(labState.labScreenAnchor.x)}  y ${formatNumber(labState.labScreenAnchor.y)}`,
+    `worldorg x ${formatNumber(labState.labWorldOrigin.x)}  y ${formatNumber(labState.labWorldOrigin.y)}`,
+    `window   x ${formatNumber(cameraState.windowOffsetX)}  y ${formatNumber(cameraState.windowOffsetY)}`,
+    `assist   x ${formatNumber(cameraState.assistOffsetX)}  y ${formatNumber(cameraState.assistOffsetY)}`,
+    `view     x ${formatNumber(viewOffset.x)}  y ${formatNumber(viewOffset.y)}`,
+    `vector   x ${formatNumber(cameraState.motionX, 2)}  y ${formatNumber(cameraState.motionY, 2)}  mag ${formatNumber(cameraState.motionMagnitude, 2)}`,
+    `selected before ${formatNumber(diagnosticActive ? cameraState.debugSelectedDistanceBefore : null)}  after ${formatNumber(diagnosticActive ? cameraState.debugSelectedDistanceAfter : null)}  d ${formatNumber(diagnosticActive ? cameraState.debugSelectedDistanceDelta : null, 2)}`,
+    `closing  score ${formatNumber(diagnosticActive ? cameraState.debugSelectedClosingScore : null, 2)}  force ${formatNumber(diagnosticActive ? cameraState.debugSelectedRadialForce : null, 2)}`,
+    `winner   ${diagnosticActive ? targetDisplayLabel(labState.closestTargetId) : '--'}`,
+    `entered  ${diagnosticActive ? targetDisplayLabel(labState.enteredTargetId) : '--'}`,
+    `target d ${formatNumber(diagnosticActive ? labState.targetDistance : null)}`,
+    `winner d ${formatNumber(diagnosticActive ? labState.winnerDistance : null)}`,
   ];
 
   if (labState.mode === 'pair') {
     const blue = labState.targets.find((target) => target.id === 'blue');
     const red = labState.targets.find((target) => target.id === 'red');
-    lines.push(`blue d   ${formatNumber(blue?.distance)}`);
-    lines.push(`red d    ${formatNumber(red?.distance)}`);
+    lines.push(`blue d   ${formatNumber(diagnosticActive ? blue?.distance : null)}`);
+    lines.push(`red d    ${formatNumber(diagnosticActive ? red?.distance : null)}`);
   } else {
-    lines.push(`closest# ${targetDisplayLabel(labState.closestTargetId)}`);
-    lines.push(`entered# ${targetDisplayLabel(labState.enteredTargetId)}`);
+    lines.push(`closest# ${diagnosticActive ? targetDisplayLabel(labState.closestTargetId) : '--'}`);
+    lines.push(`entered# ${diagnosticActive ? targetDisplayLabel(labState.enteredTargetId) : '--'}`);
     lines.push(`target#  ${targetDisplayLabel(labState.selectedTarget)}`);
   }
+
+  if (cameraState.lastError) lines.push(`error    ${cameraState.lastError}`);
 
   debugContent.textContent = lines.join('\n');
   debugToggleBtn.setAttribute('aria-expanded', String(labState.debugExpanded));
@@ -565,26 +754,46 @@ function setPairPreset(nextPreset) {
 }
 
 async function startExperiment() {
-  cameraState.cameraStreamState = 'requesting';
+  cameraState.experimentState = 'starting';
+  cameraState.cameraStreamState = cameraState.cameraStreamState === 'live' ? 'live' : 'requesting';
   cameraState.motionState = 'waiting-permission';
+  cameraState.lastError = '';
   renderLabSummary();
+
   try {
     await startCamera();
-    const granted = await ensureOrientationPermission();
-    if (!granted) {
-      cameraState.motionState = 'waiting-permission';
-      renderLabSummary();
-      return;
-    }
-    cameraState.motionState = 'waiting-calibration';
-    recenterObservationWindow();
-    renderLabSummary();
   } catch (error) {
     cameraState.cameraStreamState = 'failed';
     cameraState.motionState = 'idle';
-    debugContent.textContent = error instanceof Error ? error.message : '启动失败';
+    cameraState.experimentState = 'idle';
+    cameraState.lastError = error instanceof Error ? error.message : '相机启动失败';
     renderLabSummary();
+    return;
   }
+
+  cameraState.motionState = 'waiting-permission';
+  renderLabSummary();
+
+  try {
+    const granted = await ensureOrientationPermission();
+    if (!granted) {
+      cameraState.motionState = 'permission-denied';
+      cameraState.lastError = 'Device orientation permission denied';
+      renderLabSummary();
+      return;
+    }
+  } catch (error) {
+    orientationPermission = 'denied';
+    cameraState.motionState = 'permission-denied';
+    cameraState.lastError = error instanceof Error ? error.message : '动作权限请求失败';
+    renderLabSummary();
+    return;
+  }
+
+  cameraState.motionState = 'waiting-calibration';
+  recenterObservationWindow();
+  rebuildTargets();
+  renderLabSummary();
 }
 
 function onResize() {
@@ -597,6 +806,7 @@ function loop(now) {
   lastFrameAt = now;
   refreshObservationWindowTargets();
   updateObservationWindow(dt);
+  updateSelectedTargetAssist(dt);
   updateTargets();
   renderLabSummary();
   requestAnimationFrame(loop);
@@ -623,7 +833,7 @@ function bindEvents() {
 
 function init() {
   renderBuildStamp();
-  updateLabWorldOrigin();
+  syncLabWorldOriginFromCurrentView();
   bindEvents();
   setPairPreset('horizontal');
   setMode('pair');
