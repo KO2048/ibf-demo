@@ -35,7 +35,7 @@ const startBtn = document.getElementById('labStartBtn');
 const recenterBtn = document.getElementById('labRecenterBtn');
 
 const BUILD_INFO = {
-  label: 'observe-lab-v7',
+  label: 'observe-lab-v8',
   channel: 'main',
 };
 
@@ -72,6 +72,9 @@ const LAB_CONFIG = {
   sampleRadius: 152,
   centerZoneSize: 48,
   distanceTieThreshold: 12,
+  motionTracePauseMs: 280,
+  motionTraceHoldMs: 6000,
+  motionTraceMinGain: 10,
 };
 
 const PAIR_LABELS = {
@@ -132,6 +135,38 @@ function createLabState() {
     labScreenAnchor,
     labWorldOrigin: { ...labScreenAnchor },
     selectedProjection: null,
+    motionTrace: createMotionTraceState(),
+  };
+}
+
+function createMotionTraceState() {
+  return {
+    active: false,
+    hasRecent: false,
+    startedAt: 0,
+    updatedAt: 0,
+    lastMovingAt: 0,
+    endedAt: 0,
+    mode: '',
+    targetId: '',
+    startClosestId: '',
+    endClosestId: '',
+    enteredId: '',
+    actualTargetId: '',
+    actualGain: 0,
+    selectedStart: null,
+    selectedEnd: null,
+    selectedChange: null,
+    startDistances: {},
+    endDistances: {},
+    motionXSum: 0,
+    motionYSum: 0,
+    motionSamples: 0,
+    lastMotionX: 0,
+    lastMotionY: 0,
+    peakMotion: 0,
+    orientationSamples: 0,
+    gyroSamples: 0,
   };
 }
 
@@ -391,6 +426,7 @@ function recenterObservationWindow() {
   cameraState.debugSelectedClosingScore = null;
   cameraState.debugSelectedRadialForce = null;
   labState.selectedProjection = null;
+  resetMotionTrace();
   cameraState.horizontalInputMode = Number.isFinite(cameraState.baseAlpha) ? 'alpha' : 'gamma-fallback';
   syncMotionStateFromReadiness();
 }
@@ -502,6 +538,118 @@ function resetSelectedProjectionDebug() {
   cameraState.debugSelectedDistanceDelta = null;
   cameraState.debugSelectedClosingScore = null;
   cameraState.debugSelectedRadialForce = null;
+}
+
+function resetMotionTrace() {
+  labState.motionTrace = createMotionTraceState();
+}
+
+function snapshotTargetDistances() {
+  return labState.targets.reduce((snapshot, target) => {
+    snapshot[target.id] = target.distance;
+    return snapshot;
+  }, {});
+}
+
+function getActualTargetFromTrace(trace) {
+  let bestId = '';
+  let bestGain = -Infinity;
+
+  Object.keys(trace.startDistances).forEach((id) => {
+    const startDistance = trace.startDistances[id];
+    const endDistance = trace.endDistances[id];
+    if (!Number.isFinite(startDistance) || !Number.isFinite(endDistance)) return;
+    const gain = startDistance - endDistance;
+    if (gain > bestGain) {
+      bestGain = gain;
+      bestId = id;
+    }
+  });
+
+  return bestGain >= LAB_CONFIG.motionTraceMinGain
+    ? { id: bestId, gain: bestGain }
+    : { id: '', gain: Number.isFinite(bestGain) ? bestGain : 0 };
+}
+
+function refreshMotionTraceResult() {
+  const trace = labState.motionTrace;
+  const actual = getActualTargetFromTrace(trace);
+  trace.actualTargetId = actual.id;
+  trace.actualGain = actual.gain;
+  trace.selectedEnd = trace.endDistances[trace.targetId] ?? null;
+  trace.selectedChange = Number.isFinite(trace.selectedStart) && Number.isFinite(trace.selectedEnd)
+    ? trace.selectedStart - trace.selectedEnd
+    : null;
+}
+
+function beginMotionTrace(now, closest, entered) {
+  const distances = snapshotTargetDistances();
+  labState.motionTrace = {
+    ...createMotionTraceState(),
+    active: true,
+    startedAt: now,
+    updatedAt: now,
+    lastMovingAt: now,
+    mode: labState.mode,
+    targetId: labState.selectedTarget,
+    startClosestId: closest?.id || '',
+    endClosestId: closest?.id || '',
+    enteredId: entered?.id || '',
+    selectedStart: distances[labState.selectedTarget] ?? null,
+    selectedEnd: distances[labState.selectedTarget] ?? null,
+    selectedChange: 0,
+    startDistances: distances,
+    endDistances: { ...distances },
+    orientationSamples: cameraState.orientationSampleCount,
+    gyroSamples: cameraState.gyroSampleCount,
+  };
+}
+
+function updateMotionTraceSample(now, closest, entered, moving) {
+  const trace = labState.motionTrace;
+  trace.updatedAt = now;
+  if (moving) trace.lastMovingAt = now;
+  trace.endClosestId = closest?.id || '';
+  if (entered?.id && !trace.enteredId) trace.enteredId = entered.id;
+  trace.endDistances = snapshotTargetDistances();
+  trace.lastMotionX = cameraState.motionX;
+  trace.lastMotionY = cameraState.motionY;
+  trace.peakMotion = Math.max(trace.peakMotion, cameraState.motionMagnitude);
+  trace.motionXSum += cameraState.motionX;
+  trace.motionYSum += cameraState.motionY;
+  trace.motionSamples += 1;
+  refreshMotionTraceResult();
+}
+
+function updateMotionTrace(diagnosticActive, closest, entered) {
+  const now = performance.now();
+  const trace = labState.motionTrace;
+  const moving = diagnosticActive && cameraState.motionMagnitude > WINDOW_TUNING.motionDeadZone;
+
+  if (!diagnosticActive) return;
+
+  if (moving && !trace.active) {
+    beginMotionTrace(now, closest, entered);
+  }
+
+  if (labState.motionTrace.active) {
+    updateMotionTraceSample(now, closest, entered, moving);
+    if (!moving && now - labState.motionTrace.lastMovingAt > LAB_CONFIG.motionTracePauseMs) {
+      labState.motionTrace.active = false;
+      labState.motionTrace.hasRecent = true;
+      labState.motionTrace.endedAt = now;
+      refreshMotionTraceResult();
+    }
+    return;
+  }
+
+  if (
+    trace.hasRecent
+    && trace.endedAt
+    && now - trace.endedAt > LAB_CONFIG.motionTraceHoldMs
+  ) {
+    trace.hasRecent = false;
+  }
 }
 
 function updateSelectedTargetAssist(dt) {
@@ -641,6 +789,7 @@ function rebuildTargets() {
   labState.targetDistance = null;
   labState.winnerDistance = null;
   resetSelectedProjectionDebug();
+  resetMotionTrace();
   renderTargetPicker();
 }
 
@@ -657,6 +806,7 @@ function renderTargetPicker() {
     button.textContent = labState.mode === 'pair' ? PAIR_LABELS[id] : `#${id}`;
     button.addEventListener('click', () => {
       labState.selectedTarget = id;
+      resetMotionTrace();
       renderTargetPicker();
       renderLabSummary();
     });
@@ -729,6 +879,41 @@ function deriveSensorSummaryLine() {
   return `传感器：${orientation} · ${gyro} · samples ${cameraState.orientationSampleCount}/${cameraState.gyroSampleCount} · age ${formatAge(cameraState.lastOrientationAt)}/${formatAge(cameraState.lastGyroAt)}`;
 }
 
+function hasMotionTrace() {
+  return labState.motionTrace.active || labState.motionTrace.hasRecent;
+}
+
+function motionTraceStatusLabel() {
+  const trace = labState.motionTrace;
+  if (trace.active) return 'active';
+  if (trace.hasRecent) return 'recent';
+  return '--';
+}
+
+function motionTraceActualLabel() {
+  const trace = labState.motionTrace;
+  return trace.actualTargetId ? targetDisplayLabel(trace.actualTargetId) : '不明显';
+}
+
+function describeMotionTrace() {
+  const trace = labState.motionTrace;
+  if (!hasMotionTrace()) return '';
+
+  const prefix = trace.active ? '移动中' : '最近移动';
+  const targetLabel = targetDisplayLabel(trace.targetId);
+  const actualLabel = motionTraceActualLabel();
+  const enteredLabel = trace.enteredId ? `${targetDisplayLabel(trace.enteredId)}进中心` : '中心未进';
+  const selectedChange = Number.isFinite(trace.selectedChange)
+    ? `目标${trace.selectedChange >= 0 ? '近' : '远'}${Math.abs(trace.selectedChange).toFixed(0)}`
+    : '目标变化--';
+
+  if (!trace.actualTargetId) {
+    return `${prefix}：选${targetLabel} · 没有明显追向 · ${selectedChange}`;
+  }
+
+  return `${prefix}：选${targetLabel} · 更像追${actualLabel} · ${enteredLabel}`;
+}
+
 function updateTargets() {
   projectLabTargets();
   const center = getCaptureFrameCenter();
@@ -766,6 +951,7 @@ function updateTargets() {
     ? labState.targets.find((target) => target.id === labState.selectedTarget)?.distance || null
     : null;
   labState.winnerDistance = diagnosticActive && closest ? closest.distance : null;
+  updateMotionTrace(diagnosticActive, closest, entered);
 
   labState.targets.forEach((target) => {
     target.el.style.left = `${target.screenX}px`;
@@ -821,7 +1007,9 @@ function deriveSummaryState() {
 
   return {
     primary: `当前目标：${targetLabel} · 当前更接近参照中心：${targetDisplayLabel(labState.closestTargetId)}`,
-    secondary: `判读：${labState.hint} · 参照中心区：${centerLabel}`,
+    secondary: hasMotionTrace()
+      ? describeMotionTrace()
+      : `判读：${labState.hint} · 参照中心区：${centerLabel}`,
   };
 }
 
@@ -858,6 +1046,10 @@ function renderLabSummary() {
     `assist   x ${formatNumber(cameraState.assistOffsetX)}  y ${formatNumber(cameraState.assistOffsetY)}`,
     `view     x ${formatNumber(viewOffset.x)}  y ${formatNumber(viewOffset.y)}`,
     `vector   x ${formatNumber(cameraState.motionX, 2)}  y ${formatNumber(cameraState.motionY, 2)}  mag ${formatNumber(cameraState.motionMagnitude, 2)}`,
+    `trace    ${motionTraceStatusLabel()}  target ${hasMotionTrace() ? targetDisplayLabel(labState.motionTrace.targetId) : '--'}  actual ${hasMotionTrace() ? motionTraceActualLabel() : '--'}`,
+    `trace d  selected ${formatNumber(hasMotionTrace() ? labState.motionTrace.selectedStart : null)} -> ${formatNumber(hasMotionTrace() ? labState.motionTrace.selectedEnd : null)}  gain ${formatNumber(hasMotionTrace() ? labState.motionTrace.selectedChange : null)}`,
+    `trace in ${hasMotionTrace() ? targetDisplayLabel(labState.motionTrace.enteredId) : '--'}  closest ${hasMotionTrace() ? targetDisplayLabel(labState.motionTrace.startClosestId) : '--'} -> ${hasMotionTrace() ? targetDisplayLabel(labState.motionTrace.endClosestId) : '--'}`,
+    `trace mv x ${formatNumber(hasMotionTrace() ? labState.motionTrace.lastMotionX : null, 2)}  y ${formatNumber(hasMotionTrace() ? labState.motionTrace.lastMotionY : null, 2)}  peak ${formatNumber(hasMotionTrace() ? labState.motionTrace.peakMotion : null, 2)}`,
     `selected before ${formatNumber(diagnosticActive ? cameraState.debugSelectedDistanceBefore : null)}  after ${formatNumber(diagnosticActive ? cameraState.debugSelectedDistanceAfter : null)}  d ${formatNumber(diagnosticActive ? cameraState.debugSelectedDistanceDelta : null, 2)}`,
     `closing  score ${formatNumber(diagnosticActive ? cameraState.debugSelectedClosingScore : null, 2)}  force ${formatNumber(diagnosticActive ? cameraState.debugSelectedRadialForce : null, 2)}`,
     `winner   ${diagnosticActive ? targetDisplayLabel(labState.closestTargetId) : '--'}`,
@@ -913,6 +1105,7 @@ async function startExperiment() {
   cameraState.cameraStreamState = cameraState.cameraStreamState === 'live' ? 'live' : 'idle';
   cameraState.motionState = 'waiting-permission';
   cameraState.lastError = '';
+  resetMotionTrace();
   renderLabSummary();
 
   let orientationGranted = false;
