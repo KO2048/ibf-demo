@@ -35,7 +35,7 @@ const startBtn = document.getElementById('labStartBtn');
 const recenterBtn = document.getElementById('labRecenterBtn');
 
 const BUILD_INFO = {
-  label: 'observe-lab-v6',
+  label: 'observe-lab-v7',
   channel: 'main',
 };
 
@@ -305,16 +305,10 @@ async function startCamera() {
 async function ensureOrientationPermission() {
   if (orientationPermission === 'granted') return true;
   if (orientationPermission === 'denied') return false;
+  if (orientationPermission === 'unsupported') return false;
 
-  if (typeof window.DeviceOrientationEvent !== 'undefined'
-    && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
-    const result = await window.DeviceOrientationEvent.requestPermission();
-    orientationPermission = result === 'granted' ? 'granted' : 'denied';
-    return orientationPermission === 'granted';
-  }
-
-  orientationPermission = 'granted';
-  return true;
+  orientationPermission = await requestSensorPermission(window.DeviceOrientationEvent);
+  return orientationPermission === 'granted';
 }
 
 async function ensureGyroPermission() {
@@ -322,19 +316,55 @@ async function ensureGyroPermission() {
   if (gyroPermission === 'denied') return false;
   if (gyroPermission === 'unsupported') return false;
 
-  if (typeof window.DeviceMotionEvent === 'undefined') {
-    gyroPermission = 'unsupported';
-    return false;
+  gyroPermission = await requestSensorPermission(window.DeviceMotionEvent);
+  return gyroPermission === 'granted';
+}
+
+function isFinalPermissionState(value) {
+  return value === 'granted' || value === 'denied' || value === 'unsupported';
+}
+
+async function requestSensorPermission(Ctor) {
+  if (typeof Ctor === 'undefined') return 'unsupported';
+  if (typeof Ctor.requestPermission === 'function') {
+    const result = await Ctor.requestPermission();
+    return result === 'granted' ? 'granted' : 'denied';
+  }
+  return 'granted';
+}
+
+async function requestSensorPermissionsFromGesture() {
+  const orientationRequest = isFinalPermissionState(orientationPermission)
+    ? Promise.resolve(orientationPermission)
+    : requestSensorPermission(window.DeviceOrientationEvent);
+  const gyroRequest = isFinalPermissionState(gyroPermission)
+    ? Promise.resolve(gyroPermission)
+    : requestSensorPermission(window.DeviceMotionEvent);
+  const [orientationResult, gyroResult] = await Promise.allSettled([
+    orientationRequest,
+    gyroRequest,
+  ]);
+  const errors = [];
+
+  if (orientationResult.status === 'fulfilled') {
+    orientationPermission = orientationResult.value;
+  } else {
+    orientationPermission = 'denied';
+    errors.push(orientationResult.reason);
   }
 
-  if (typeof window.DeviceMotionEvent.requestPermission === 'function') {
-    const result = await window.DeviceMotionEvent.requestPermission();
-    gyroPermission = result === 'granted' ? 'granted' : 'denied';
-    return gyroPermission === 'granted';
+  if (gyroResult.status === 'fulfilled') {
+    gyroPermission = gyroResult.value;
+  } else {
+    gyroPermission = 'denied';
+    errors.push(gyroResult.reason);
   }
 
-  gyroPermission = 'granted';
-  return true;
+  return {
+    orientationGranted: orientationPermission === 'granted',
+    gyroGranted: gyroPermission === 'granted',
+    errors,
+  };
 }
 
 function recenterObservationWindow() {
@@ -750,7 +780,9 @@ function deriveHint() {
   if (cameraState.cameraStreamState === 'failed') return '无法启动后摄';
   if (cameraState.cameraStreamState === 'requesting') return '请求相机中';
   if (cameraState.cameraStreamState === 'idle') return '等待开始';
-  if (cameraState.motionState === 'permission-denied') return '无法读取手机转向，移动手机不会改变测试对象';
+  if (cameraState.motionState === 'permission-denied') {
+    return 'Safari 动作与方向访问未开启，或本次权限被拒绝；移动手机不会改变测试对象';
+  }
   if (cameraState.motionState === 'waiting-permission') return '等待姿态权限';
   if (cameraState.motionState === 'waiting-calibration' && cameraState.orientationSampleCount === 0) {
     return '未收到姿态采样，移动手机不会改变测试对象';
@@ -878,9 +910,23 @@ function setPairPreset(nextPreset) {
 
 async function startExperiment() {
   cameraState.experimentState = 'starting';
-  cameraState.cameraStreamState = cameraState.cameraStreamState === 'live' ? 'live' : 'requesting';
+  cameraState.cameraStreamState = cameraState.cameraStreamState === 'live' ? 'live' : 'idle';
   cameraState.motionState = 'waiting-permission';
   cameraState.lastError = '';
+  renderLabSummary();
+
+  let orientationGranted = false;
+  let sensorPermissionResult;
+  try {
+    sensorPermissionResult = await requestSensorPermissionsFromGesture();
+    orientationGranted = sensorPermissionResult.orientationGranted;
+  } catch (error) {
+    orientationPermission = 'denied';
+    gyroPermission = gyroPermission === 'idle' ? 'denied' : gyroPermission;
+    cameraState.lastError = error instanceof Error ? error.message : '传感器权限请求失败';
+  }
+
+  cameraState.cameraStreamState = cameraState.cameraStreamState === 'live' ? 'live' : 'requesting';
   renderLabSummary();
 
   try {
@@ -894,29 +940,16 @@ async function startExperiment() {
     return;
   }
 
-  cameraState.motionState = 'waiting-permission';
-  renderLabSummary();
-
-  let orientationGranted = false;
-  try {
-    orientationGranted = await ensureOrientationPermission();
-  } catch (error) {
-    orientationPermission = 'denied';
-    cameraState.lastError = error instanceof Error ? error.message : '姿态权限请求失败';
-  }
-
-  try {
-    await ensureGyroPermission();
-  } catch (error) {
-    gyroPermission = 'denied';
-    if (!cameraState.lastError) {
-      cameraState.lastError = error instanceof Error ? error.message : '陀螺仪权限请求失败';
-    }
-  }
-
   if (!orientationGranted) {
     cameraState.motionState = 'permission-denied';
-    if (!cameraState.lastError) cameraState.lastError = 'Device orientation permission denied';
+    if (!cameraState.lastError && sensorPermissionResult?.errors?.length) {
+      cameraState.lastError = sensorPermissionResult.errors
+        .map((error) => (error instanceof Error ? error.message : String(error)))
+        .join('; ');
+    }
+    if (!cameraState.lastError) {
+      cameraState.lastError = 'Safari Motion & Orientation Access disabled or permission denied';
+    }
     renderLabSummary();
     return;
   }

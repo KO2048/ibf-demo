@@ -39,7 +39,7 @@
 | NOW-001 | 稳定观察窗坐标体系与追逐辅助 | engineering | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:58 CST | 后摄观察窗“连续受力式追近”重做计划 | `observe-v3` |  |  | 已把后摄追逐主模型从“方向匹配”切到“连续运动向量 + 距离缩短力”，并继续收紧 startle 触发门槛；待 iPhone 后摄复测“越追越远”是否消失 | 先让“越追越远”消失，再收可抓性和稳手感；当前仍不改主玩法结构 |
 | NOW-002 | iPhone Safari 验证“追近 / 看丢 / 惊走”三段体验 | ux | active | P0 | 2026-04-24 | plan | 观察窗 + 追近 + 稳手惊走计划 | Phase 2 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:32 CST | TBD | TBD |  |  | 待下一轮 GitHub Pages 实测；重点验证右 / 下 / 右下三种后摄追近是否更符合直觉 | 成功标准：追它有帮助、不会太难、追错更像看丢、动作轻一点更好抓、整体更像在追蝴蝶 |
 | NOW-003 | 给页面加入可见 build / version 标记 | process | active | P1 | 2026-04-24 | user-feedback | GitHub Pages 缓存混淆反馈 | Phase 1 | Codex | 2026-04-24 17:33 CST | Codex | 2026-04-24 20:58 CST | Build 标记一致性修复计划 | `observe-v3` |  |  | 页面当前本地将由 `BUILD_INFO` 渲染 `build observe-v3 · main`；真实 commit 继续由 `Change Log` 追溯 | 用于实机测试时确认缓存与 build 对应关系，避免 UI 文案与真实 commit 再次过期 |
-| NOW-004 | 新增后摄双模式实验页校准追近语义 | engineering | active | P1 | 2026-04-24 | user-feedback | 红蓝对称 / 多点编号采样诊断方案 | Phase 1 | Codex | 2026-04-24 21:32 CST | Codex | 2026-04-25 16:46 CST | Observe Lab v6 传感器真值与采样可视化计划 | `observe-lab-v6` |  |  | 实验页在 v5 蝴蝶层投影基础上补充姿态 / 陀螺仪权限与采样读数；先确认手机运动输入是否进入页面，再判断追近语义 | 若姿态权限被拒绝或无采样，页面会明确提示移动手机不会改变测试对象；本轮仍不改主玩法、不改追近算法 |
+| NOW-004 | 新增后摄双模式实验页校准追近语义 | engineering | active | P1 | 2026-04-24 | user-feedback | 红蓝对称 / 多点编号采样诊断方案 | Phase 1 | Codex | 2026-04-24 21:32 CST | Codex | 2026-04-26 12:17 CST | Observe Lab v7 姿态权限请求顺序修复计划 | `observe-lab-v7` |  |  | 实验页在 v6 传感器真值基础上，把姿态 / 陀螺仪权限请求提前到点击“开始实验”后的第一步，再启动后摄；先排除 iPhone Safari 用户手势授权丢失问题 | 若 v7 后仍是 `samples 0/0`，基本归因到 Safari 系统设置或站点权限状态；本轮仍不改主玩法、不改追近算法 |
 
 ## Next
 
@@ -142,3 +142,4 @@
 - 2026-04-25 11:28 CST · Codex：本地将 `observe-lab` 推进到 `observe-lab-v4`；实验页真值拆成 `cameraStreamState / cameraRoleState / motionState / experimentState` 四层，并禁止在实验未 active 时输出“谁更接近参照中心”的诊断结论。
 - 2026-04-25 12:32 CST · Codex：本地将 `observe-lab` 推进到 `observe-lab-v5`；测试目标改成静态蝴蝶层对象，选中目标驱动同构追近 assist，所有对象统一按 `world - window - assist` 投影到屏幕。
 - 2026-04-25 16:46 CST · Codex：本地将 `observe-lab` 推进到 `observe-lab-v6`；底部摘要和折叠详情新增姿态 `alpha/beta/gamma`、陀螺仪 `rotationRate`、采样数和最近采样时间，用来先判断手机运动输入是否真实进入页面。
+- 2026-04-26 12:17 CST · Codex：本地将 `observe-lab` 推进到 `observe-lab-v7`；点击“开始实验”后先请求姿态 / 陀螺仪权限，再启动后摄，用于排除 iPhone Safari 因相机异步流程导致用户手势授权丢失的问题。
