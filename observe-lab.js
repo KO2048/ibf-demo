@@ -35,7 +35,7 @@ const startBtn = document.getElementById('labStartBtn');
 const recenterBtn = document.getElementById('labRecenterBtn');
 
 const BUILD_INFO = {
-  label: 'observe-lab-v8',
+  label: 'observe-lab-v9',
   channel: 'main',
 };
 
@@ -44,12 +44,12 @@ const WINDOW_TUNING = {
   yawRangeAlpha: 28,
   gammaFallbackRange: 18,
   yawMaxOffsetX: 240,
-  pitchRangeBeta: 18,
-  pitchMaxOffsetY: 180,
+  pitchRangeBeta: 42,
+  pitchMaxOffsetY: 360,
   windowSignX: -1,
   windowSignY: -1,
   yawMotionScale: 24,
-  pitchMotionScale: 20,
+  pitchMotionScale: 26,
   motionSignX: -1,
   motionSignY: -1,
   motionSmoothing: 0.26,
@@ -204,6 +204,9 @@ function createCameraState() {
     debugSelectedDistanceDelta: null,
     debugSelectedClosingScore: null,
     debugSelectedRadialForce: null,
+    debugPitchRawDelta: null,
+    debugPitchClampedDelta: null,
+    debugPitchLimitHit: false,
     orientationSampleCount: 0,
     gyroSampleCount: 0,
     lastOrientationAt: 0,
@@ -425,6 +428,9 @@ function recenterObservationWindow() {
   cameraState.debugSelectedDistanceDelta = null;
   cameraState.debugSelectedClosingScore = null;
   cameraState.debugSelectedRadialForce = null;
+  cameraState.debugPitchRawDelta = null;
+  cameraState.debugPitchClampedDelta = null;
+  cameraState.debugPitchLimitHit = false;
   labState.selectedProjection = null;
   resetMotionTrace();
   cameraState.horizontalInputMode = Number.isFinite(cameraState.baseAlpha) ? 'alpha' : 'gamma-fallback';
@@ -506,6 +512,12 @@ function refreshObservationWindowTargets() {
 
   cameraState.targetOffsetX = targets.targetOffsetX;
   cameraState.targetOffsetY = targets.targetOffsetY;
+  cameraState.debugPitchRawDelta = Number.isFinite(cameraState.latestBeta) && Number.isFinite(cameraState.baseBeta)
+    ? cameraState.latestBeta - cameraState.baseBeta
+    : null;
+  cameraState.debugPitchClampedDelta = targets.betaDelta;
+  cameraState.debugPitchLimitHit = Number.isFinite(cameraState.debugPitchRawDelta)
+    && Math.abs(cameraState.debugPitchRawDelta) >= WINDOW_TUNING.pitchRangeBeta - 0.01;
   cameraState.horizontalInputMode = motion.horizontalInputMode;
   cameraState.motionX = lerp(cameraState.motionX, motion.motionX, WINDOW_TUNING.motionSmoothing);
   cameraState.motionY = lerp(cameraState.motionY, motion.motionY, WINDOW_TUNING.motionSmoothing);
@@ -876,7 +888,8 @@ function deriveSensorSummaryLine() {
     cameraState.latestGyroGamma,
     1,
   );
-  return `传感器：${orientation} · ${gyro} · samples ${cameraState.orientationSampleCount}/${cameraState.gyroSampleCount} · age ${formatAge(cameraState.lastOrientationAt)}/${formatAge(cameraState.lastGyroAt)}`;
+  const pitch = `pitch ${formatNumber(cameraState.debugPitchRawDelta, 0)}→${formatNumber(cameraState.debugPitchClampedDelta, 0)}${cameraState.debugPitchLimitHit ? ' cap' : ''}`;
+  return `传感器：${orientation} · ${gyro} · ${pitch} · samples ${cameraState.orientationSampleCount}/${cameraState.gyroSampleCount} · age ${formatAge(cameraState.lastOrientationAt)}/${formatAge(cameraState.lastGyroAt)}`;
 }
 
 function hasMotionTrace() {
@@ -1036,6 +1049,7 @@ function renderLabSummary() {
     `age      ori ${formatAge(cameraState.lastOrientationAt)}  gyro ${formatAge(cameraState.lastGyroAt)}`,
     `ori      alpha ${formatNumber(cameraState.latestAlpha, 2)}  beta ${formatNumber(cameraState.latestBeta, 2)}  gamma ${formatNumber(cameraState.latestGamma, 2)}`,
     `ori d    alpha ${formatNumber(orientationDeltas.alpha, 2)}  beta ${formatNumber(orientationDeltas.beta, 2)}  gamma ${formatNumber(orientationDeltas.gamma, 2)}`,
+    `pitch   raw ${formatNumber(cameraState.debugPitchRawDelta, 2)}  clamped ${formatNumber(cameraState.debugPitchClampedDelta, 2)}  range ${WINDOW_TUNING.pitchRangeBeta}  cap ${cameraState.debugPitchLimitHit ? 'yes' : 'no'}`,
     `gyro     alpha ${formatNumber(cameraState.latestGyroAlpha, 2)}  beta ${formatNumber(cameraState.latestGyroBeta, 2)}  gamma ${formatNumber(cameraState.latestGyroGamma, 2)}`,
     `cam      ${cameraState.facingMode}`,
     `mode     ${labState.mode === 'pair' ? `pair-${labState.pairPreset}` : 'sample-8'}`,
