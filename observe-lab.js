@@ -35,7 +35,7 @@ const startBtn = document.getElementById('labStartBtn');
 const recenterBtn = document.getElementById('labRecenterBtn');
 
 const BUILD_INFO = {
-  label: 'observe-lab-v9',
+  label: 'observe-lab-v10',
   channel: 'main',
 };
 
@@ -44,7 +44,7 @@ const WINDOW_TUNING = {
   yawRangeAlpha: 28,
   gammaFallbackRange: 18,
   yawMaxOffsetX: 240,
-  pitchRangeBeta: 42,
+  pitchRangeBeta: 96,
   pitchMaxOffsetY: 360,
   windowSignX: -1,
   windowSignY: -1,
